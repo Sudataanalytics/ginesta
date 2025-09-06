@@ -1,0 +1,20 @@
+# Ignorar carpetas y archivos del entorno Python
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.ipynb_checkpoints/  # Para notebooks Jupyter si usas
+.vscode/             # Configuración local de VS Code
+
+# Archivos de configuración y secretos (MUY IMPORTANTE)
+.env                 # Tu archivo de variables de entorno con credenciales
+*.log                # Archivos de log generados por tu aplicación
+
+# Archivos específicos de Power BI (MUY IMPORTANTE)
+*.pbix               # Tu archivo de Power BI Desktop. Se publica, no se versiona.
+*.pbit
+*.pbi
+
+# Ignorar archivos temporales o de sistema operativo
+.DS_Store            # macOS
+Thumbs.db            # Windows
