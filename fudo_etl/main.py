@@ -6,11 +6,11 @@ import uuid
 import time
 from hashlib import md5
 # Tus módulos
-from .modules.config import load_config
-from .modules.db_manager import DBManager
-from .modules.etl_metadata_manager import ETLMetadataManager
-from .modules.fudo_auth import FudoAuthenticator
-from .modules.fudo_api_client import FudoApiClient
+from modules.config import load_config
+from modules.db_manager import DBManager
+from modules.etl_metadata_manager import ETLMetadataManager
+from modules.fudo_auth import FudoAuthenticator
+from modules.fudo_api_client import FudoApiClient
 
 # Configuración básica de logging para todo el script principal
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -337,7 +337,8 @@ if __name__ == "__main__":
         # Paso 1: Ejecutar el script DDL maestro para crear/actualizar toda la estructura.
         # Esto se puede ejecutar siempre, ya que usa CREATE IF NOT EXISTS.
         logger.info("Iniciando fase de DESPLIEGUE DE ESTRUCTURA...")
-        deploy_fudo_database_structure(db_for_all_phases, 'fudo_etl/sql/deploy_fudo_structure.sql')
+        deploy_fudo_database_structure(db_for_all_phases, 'sql/deploy_fudo_structure.sql')
+        # ---------------------------------------------
         logger.info("Fase de DESPLIEGUE DE ESTRUCTURA completada.")
 
         # Paso 2: Ejecutar el ETL RAW completo y la fase de refresco de MVs

@@ -10,10 +10,11 @@ class FudoApiClient:
     def __init__(self, api_base_url: str):
         self.api_base_url = api_base_url
         self.auth_token = None
-        self.max_retries = 10 
-        self.initial_backoff_delay = 2 
-        self.max_backoff_delay = 120 
-        self.inter_page_delay = 0.5 
+        self.max_retries = 15 # Aumentar a 15 reintentos
+        self.initial_backoff_delay = 5 # Aumentar a 5 segundos de espera inicial
+        self.max_backoff_delay = 300 # Aumentar a 300 segundos (5 minutos) de espera máxima
+        self.inter_page_delay = 1.0 # Aumentar a 1 segundo entre páginas (pausa preventiva)
+
         
         # --- DEFINIR EXPLICITAMENTE QUÉ ENTIDADES SOPORTAN FILTROS INCREMENTALES POR 'createdAt' ---
         # Basado en las pruebas, solo 'sales' soporta 'filter[createdAt]'
