@@ -13,7 +13,7 @@ steps:
   dir: fudo_etl # <--- AÑADIR ESTO AQUI (para consistencia si se necesitara el contexto)
 
 # Deploy to Cloud Run Jobs
-- name: 'gcr.io/google.com/cloudsdk/cloud-sdk'
+- name: 'gcr.io/cloud-builders/gcloud'
   args: [
       'gcloud', 'run', 'jobs', 'deploy', 'ginesta-fudo-etl-job', 
       '--image', 'us-central1-docker.pkg.dev/ginestafudo/ginesta-fudo-etl-repo/ginesta-fudo-etl:${_TAG_NAME}', 
