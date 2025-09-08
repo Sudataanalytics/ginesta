@@ -1,7 +1,7 @@
 steps:
 # Build the Docker image
 - name: 'gcr.io/cloud-builders/docker'
-  args: ['build', '-t', 'us-central1-docker.pkg.dev/ginestafudo/ginesta-fudo-etl-repo/ginesta-fudo-etl:${_TAG_NAME}', '-f', 'Dockerfile', '.']
+  args: ['build', '-t', 'us-central1-docker.pkg.dev/ginestafudo/ginesta-fudo-etl-repo/ginesta-fudo-etl:${_TAG_NAME}', '-f', 'fudo_etl/Dockerfile', 'fudo_etl']
   id: Build
 
 # Push the Docker image to Artifact Registry
