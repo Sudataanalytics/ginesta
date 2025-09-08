@@ -1,18 +1,21 @@
+# fudo_etl/cloudbuild.yaml
 steps:
 # Build the Docker image
 - name: 'gcr.io/cloud-builders/docker'
-  args: ['build', '-t', 'us-central1-docker.pkg.dev/ginestafudo/ginesta-fudo-etl-repo/ginesta-fudo-etl:${_TAG_NAME}', '-f', 'fudo_etl/Dockerfile', 'fudo_etl']
+  args: ['build', '-t', 'us-central1-docker.pkg.dev/ginestafudo/ginesta-fudo-etl-repo/ginesta-fudo-etl:${_TAG_NAME}', '-f', 'Dockerfile', '.']
   id: Build
+  dir: fudo_etl # <--- AÑADIR ESTO AQUI
 
 # Push the Docker image to Artifact Registry
 - name: 'gcr.io/cloud-builders/docker'
   args: ['push', 'us-central1-docker.pkg.dev/ginestafudo/ginesta-fudo-etl-repo/ginesta-fudo-etl:${_TAG_NAME}']
   id: Push
+  dir: fudo_etl # <--- AÑADIR ESTO AQUI (para consistencia si se necesitara el contexto)
 
 # Deploy to Cloud Run Jobs
 - name: 'gcr.io/google.com/cloudsdk/cloud-sdk'
   args: [
-      'gcloud', 'run', 'jobs', 'deploy', 'ginesta-fudo-etl-job', # Nombre del Cloud Run Job
+      'gcloud', 'run', 'jobs', 'deploy', 'ginesta-fudo-etl-job', 
       '--image', 'us-central1-docker.pkg.dev/ginestafudo/ginesta-fudo-etl-repo/ginesta-fudo-etl:${_TAG_NAME}', 
       '--region', 'us-central1',
       # --- Mapeo de TODOS tus secretos aquí ---
@@ -23,6 +26,7 @@ steps:
       '--memory', '2Gi' 
   ]
   id: Deploy
+  dir: fudo_etl # <--- AÑADIR ESTO AQUI (para gcloud run jobs)
 
 images:
 - 'us-central1-docker.pkg.dev/ginestafudo/ginesta-fudo-etl-repo/ginesta-fudo-etl:${_TAG_NAME}'
@@ -31,4 +35,4 @@ substitutions:
   _TAG_NAME: 'latest'
 
 options:
-  logging: CLOUD_LOGGING_ONLY # Enviar logs de compilación solo a Cloud Logging
+  logging: CLOUD_LOGGING_ONLY
