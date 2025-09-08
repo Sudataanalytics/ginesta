@@ -4,29 +4,28 @@ steps:
 - name: 'gcr.io/cloud-builders/docker'
   args: ['build', '-t', 'us-central1-docker.pkg.dev/ginestafudo/ginesta-fudo-etl-repo/ginesta-fudo-etl:${_TAG_NAME}', '-f', 'Dockerfile', '.']
   id: Build
-  dir: fudo_etl # <--- AÑADIR ESTO AQUI
+  dir: fudo_etl
 
 # Push the Docker image to Artifact Registry
 - name: 'gcr.io/cloud-builders/docker'
   args: ['push', 'us-central1-docker.pkg.dev/ginestafudo/ginesta-fudo-etl-repo/ginesta-fudo-etl:${_TAG_NAME}']
   id: Push
-  dir: fudo_etl # <--- AÑADIR ESTO AQUI (para consistencia si se necesitara el contexto)
+  dir: fudo_etl
 
 # Deploy to Cloud Run Jobs
 - name: 'gcr.io/cloud-builders/gcloud'
   args: [
-      'gcloud', 'run', 'jobs', 'deploy', 'ginesta-fudo-etl-job', 
-      '--image', 'us-central1-docker.pkg.dev/ginestafudo/ginesta-fudo-etl-repo/ginesta-fudo-etl:${_TAG_NAME}', 
+      'run', 'jobs', 'deploy', 'ginesta-fudo-etl-job',
+      '--image', 'us-central1-docker.pkg.dev/ginestafudo/ginesta-fudo-etl-repo/ginesta-fudo-etl:${_TAG_NAME}',
       '--region', 'us-central1',
-      # --- Mapeo de TODOS tus secretos aquí ---
       '--set-secrets', 'FUDO_CHALE_APIKEY=fudo-chale-apikey:latest,FUDO_CHALE_APISECRET=fudo-chale-apisecret:latest,FUDO_QUITO_BAR_APIKEY=fudo-quito-bar-apikey:latest,FUDO_QUITO_BAR_APISECRET=fudo-quito-bar-apisecret:latest,FUDO_NEBRASKA_SAS_APIKEY=fudo-nebraska-sas-apikey:latest,FUDO_NEBRASKA_SAS_APISECRET=fudo-nebraska-sas-apisecret:latest,FUDO_PUNTO_CRIOLLO_APIKEY=fudo-punto-criollo-apikey:latest,FUDO_PUNTO_CRIOLLO_APISECRET=fudo-punto-criollo-apisecret:latest,DONWEB_ADMIN_CONNECTION_STRING=donweb-admin-connection-string:latest,DB_CONNECTION_STRING=donweb-db-connection-string:latest,TARGET_DATABASE_NAME=target-database-name:latest,FUDO_AUTH_ENDPOINT=fudo-auth-endpoint:latest,FUDO_API_BASE_URL=fudo-api-base-url:latest,GCP_PROJECT_ID=gcp-project-id:latest',
-      '--execution-timeout', '3600s', 
-      '--max-retries', '3', 
-      '--cpu', '1', 
-      '--memory', '2Gi' 
+      '--execution-timeout', '3600s',
+      '--max-retries', '3',
+      '--cpu', '1',
+      '--memory', '2Gi'
   ]
   id: Deploy
-  dir: fudo_etl # <--- AÑADIR ESTO AQUI (para gcloud run jobs)
+  dir: fudo_etl
 
 images:
 - 'us-central1-docker.pkg.dev/ginestafudo/ginesta-fudo-etl-repo/ginesta-fudo-etl:${_TAG_NAME}'
