@@ -370,24 +370,33 @@ CREATE TABLE IF NOT EXISTS public.Pagos (
   pos_order_id INTEGER NOT NULL,
   id_payment INTEGER NOT NULL,
   amount FLOAT NOT NULL,
-  payment_date TIMESTAMP NOT NULL
+  payment_date TIMESTAMP NOT NULL,
+  id_sucursal VARCHAR(255) NOT NULL
 );
 
+-- mv_pagos (DER)
 CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_pagos AS
 SELECT DISTINCT ON (p.id_fudo, p.id_sucursal_fuente)
     (p.payload_json ->> 'id')::INTEGER AS id,
     (p.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id')::INTEGER AS pos_order_id,
     (p.payload_json -> 'relationships' -> 'paymentMethod' -> 'data' ->> 'id')::INTEGER AS id_payment,
     (p.payload_json -> 'attributes' ->> 'amount')::FLOAT AS amount,
-    (p.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE AS payment_date
+    (p.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE AS payment_date,
+    -- --- AÑADIR LA COLUMNA id_sucursal ---
+    frs.id_sucursal_fuente AS id_sucursal
+    -- ------------------------------------
 FROM public.fudo_raw_payments p
+-- --- UNIR CON fudo_raw_sales para obtener id_sucursal ---
+JOIN public.fudo_raw_sales frs ON (p.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id')::INTEGER = (frs.payload_json ->> 'id')::INTEGER
+-- --------------------------------------------------------
 WHERE
     p.payload_json ->> 'id' IS NOT NULL AND
     (p.payload_json -> 'attributes' ->> 'amount') IS NOT NULL AND
     (p.payload_json -> 'attributes' ->> 'createdAt') IS NOT NULL AND
     (p.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id') IS NOT NULL AND
     (p.payload_json -> 'relationships' -> 'paymentMethod' -> 'data' ->> 'id') IS NOT NULL AND
-    (p.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN IS NOT TRUE
+    (p.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN IS NOT TRUE AND
+    frs.id_sucursal_fuente IS NOT NULL -- Asegurar que la venta join tenga sucursal
 ORDER BY p.id_fudo, p.id_sucursal_fuente, p.fecha_extraccion_utc DESC;
 
 -- Sales_order_line (DER)

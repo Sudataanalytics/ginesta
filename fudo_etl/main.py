@@ -1,11 +1,14 @@
-# fudo-etl-project/main.py
+# fudo_etl/main.py
 import logging
 import json
 from datetime import datetime, timezone
 import uuid
 import time
 from hashlib import md5
-# Tus módulos
+import os
+
+# Tus módulos (importaciones directas/relativas a la raíz del WORKDIR /app en Docker)
+# Dentro del contenedor Docker, 'main.py' está en /app, y 'modules' está en /app/modules
 from modules.config import load_config
 from modules.db_manager import DBManager
 from modules.etl_metadata_manager import ETLMetadataManager
@@ -57,7 +60,6 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
                 (payload_json ->> 'id')::INTEGER AS id_rubro,
                 (payload_json -> 'attributes' ->> 'name')::VARCHAR(255) AS rubro_name
             FROM public.fudo_raw_product_categories
-    -- NUEVA LÍNEA: ADD WHERE payload_checksum IS NOT NULL for MV creation
             WHERE
                 payload_json ->> 'id' IS NOT NULL AND
                 payload_json -> 'attributes' ->> 'name' IS NOT NULL
@@ -105,7 +107,7 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
                 s.payload_json ->> 'id' IS NOT NULL AND
                 s.payload_json -> 'attributes' ->> 'total' IS NOT NULL AND
                 (s.payload_json -> 'attributes' ->> 'saleState') = 'CLOSED' AND
-                s.id_sucursal_fuente IS NOT NULL -- <--- ¡AÑADIR AQUÍ TAMBIÉN!
+                s.id_sucursal_fuente IS NOT NULL
             ORDER BY s.id_fudo, s.id_sucursal_fuente, s.fecha_extraccion_utc DESC;
         """),
         # mv_pagos
@@ -116,15 +118,18 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
                 (p.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id')::INTEGER AS pos_order_id,
                 (p.payload_json -> 'relationships' -> 'paymentMethod' -> 'data' ->> 'id')::INTEGER AS id_payment,
                 (p.payload_json -> 'attributes' ->> 'amount')::FLOAT AS amount,
-                (p.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE AS payment_date
+                (p.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE AS payment_date,
+                frs.id_sucursal_fuente AS id_sucursal
             FROM public.fudo_raw_payments p
+            JOIN public.fudo_raw_sales frs ON (p.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id')::INTEGER = (frs.payload_json ->> 'id')::INTEGER
             WHERE
                 p.payload_json ->> 'id' IS NOT NULL AND
                 (p.payload_json -> 'attributes' ->> 'amount') IS NOT NULL AND
                 (p.payload_json -> 'attributes' ->> 'createdAt') IS NOT NULL AND
                 (p.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id') IS NOT NULL AND
                 (p.payload_json -> 'relationships' -> 'paymentMethod' -> 'data' ->> 'id') IS NOT NULL AND
-                (p.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN IS NOT TRUE
+                (p.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN IS NOT TRUE AND
+                frs.id_sucursal_fuente IS NOT NULL
             ORDER BY p.id_fudo, p.id_sucursal_fuente, p.fecha_extraccion_utc DESC;
         """),
         # mv_sales_order_line
@@ -157,12 +162,10 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
     for mv_name, create_sql in materialized_views_configs:
         logger.info(f"  Procesando Vista Materializada: '{mv_name}'...")
         try:
-            # Intentar crear la MV si no existe
             logger.info(f"    Intentando crear MV '{mv_name}' si no existe...")
             db_manager.execute_query(create_sql)
             logger.info(f"    MV '{mv_name}' creada/existente.")
 
-            # Luego, refrescarla
             logger.info(f"    Refrescando MV '{mv_name}'...")
             db_manager.execute_query(f"REFRESH MATERIALIZED VIEW public.{mv_name};")
             logger.info(f"    MV '{mv_name}' refrescada exitosamente.")
@@ -310,11 +313,14 @@ def deploy_fudo_database_structure(db_manager: DBManager, ddl_script_path: str):
     logger.info("==================================================")
     try:
         # Leer el script DDL completo
-        with open(ddl_script_path, 'r', encoding='utf-8') as f:
+        current_dir = os.path.dirname(__file__)
+        absolute_ddl_path = os.path.join(current_dir, ddl_script_path)
+        
+        # --- CORRECCIÓN FINAL AQUÍ: USAR absolute_ddl_path ---
+        with open(absolute_ddl_path, 'r', encoding='utf-8') as f:
+        # -----------------------------------------------------
             sql_script_content = f.read()
         
-        # Ejecutar el script SQL completo
-        # La función execute_sql_script en db_manager.py ya maneja la ejecución y commit.
         db_manager.execute_sql_script(sql_script_content)
         logger.info("Estructura de la base de datos Fudo desplegada/actualizada exitosamente.")
     except Exception as e:
@@ -323,7 +329,6 @@ def deploy_fudo_database_structure(db_manager: DBManager, ddl_script_path: str):
     logger.info("==================================================")
     logger.info("  Despliegue de estructura Fudo FINALIZADO.")
     logger.info("==================================================")
-
 
 if __name__ == "__main__":
     # --- FASE DE DESPLIEGUE INICIAL Y EJECUCIÓN REGULAR ---
@@ -338,7 +343,6 @@ if __name__ == "__main__":
         # Esto se puede ejecutar siempre, ya que usa CREATE IF NOT EXISTS.
         logger.info("Iniciando fase de DESPLIEGUE DE ESTRUCTURA...")
         deploy_fudo_database_structure(db_for_all_phases, 'sql/deploy_fudo_structure.sql')
-        # ---------------------------------------------
         logger.info("Fase de DESPLIEGUE DE ESTRUCTURA completada.")
 
         # Paso 2: Ejecutar el ETL RAW completo y la fase de refresco de MVs
