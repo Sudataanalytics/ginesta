@@ -19,10 +19,10 @@ steps:
       '--image', 'us-central1-docker.pkg.dev/ginestafudo/ginesta-fudo-etl-repo/ginesta-fudo-etl:${_TAG_NAME}',
       '--region', 'us-central1',
       '--set-secrets', 'FUDO_CHALE_APIKEY=fudo-chale-apikey:latest,FUDO_CHALE_APISECRET=fudo-chale-apisecret:latest,FUDO_QUITO_BAR_APIKEY=fudo-quito-bar-apikey:latest,FUDO_QUITO_BAR_APISECRET=fudo-quito-bar-apisecret:latest,FUDO_NEBRASKA_SAS_APIKEY=fudo-nebraska-sas-apikey:latest,FUDO_NEBRASKA_SAS_APISECRET=fudo-nebraska-sas-apisecret:latest,FUDO_PUNTO_CRIOLLO_APIKEY=fudo-punto-criollo-apikey:latest,FUDO_PUNTO_CRIOLLO_APISECRET=fudo-punto-criollo-apisecret:latest,DONWEB_ADMIN_CONNECTION_STRING=donweb-admin-connection-string:latest,DB_CONNECTION_STRING=donweb-db-connection-string:latest,TARGET_DATABASE_NAME=target-database-name:latest,FUDO_AUTH_ENDPOINT=fudo-auth-endpoint:latest,FUDO_API_BASE_URL=fudo-api-base-url:latest,GCP_PROJECT_ID=gcp-project-id:latest',
-      '--task-timeout=3600s',
+      '--task-timeout=7200s',
       '--max-retries=3',
       '--cpu=1',
-      '--memory=2Gi'
+      '--memory=4Gi'
   ]
   id: Deploy
   dir: fudo_etl

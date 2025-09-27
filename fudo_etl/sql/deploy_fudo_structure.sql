@@ -434,3 +434,179 @@ WHERE
     (i.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN IS NOT TRUE AND
     ((i.payload_json -> 'attributes' ->> 'quantity')::FLOAT)::INTEGER > 0
 ORDER BY i.id_fudo, i.id_sucursal_fuente, i.fecha_extraccion_utc DESC;
+
+-- ----------------------------------------------------------------------
+-- 4. VISTAS DESNORMALIZADAS DE LA CAPA RAW (PARA EXPLORACIÓN Y REPORTES FLEXIBLES)
+-- Estos son VISTAS estándar (no materializadas) que desestructuran el JSONB.
+-- Se utilizan para facilitar la exploración y acceso directo a los datos.
+-- Cada vista incluye el 'original_payload' para auditoría.
+-- ----------------------------------------------------------------------
+
+-- fudo_view_raw_customers
+drop view if exists public.fudo_view_raw_customers CASCADE;
+CREATE OR REPLACE VIEW public.fudo_view_raw_customers AS
+SELECT
+    c.id_fudo, c.id_sucursal_fuente, c.fecha_extraccion_utc, c.payload_checksum,
+    (c.payload_json ->> 'id') AS customer_id,
+    (c.payload_json -> 'attributes' ->> 'name') AS customer_active,
+    (c.payload_json -> 'attributes' ->> 'email') AS email,
+    (c.payload_json -> 'attributes' ->> 'phone') AS phone,
+    (c.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE AS created_at,
+    (c.payload_json -> 'attributes' ->> 'lastSaleDate')::TIMESTAMP WITH TIME ZONE AS last_sale_date,
+    (c.payload_json -> 'attributes' ->> 'salesCount')::INTEGER AS sales_count,
+    c.payload_json AS original_payload
+FROM public.fudo_raw_customers c
+ORDER BY c.id_fudo, c.id_sucursal_fuente, c.fecha_extraccion_utc DESC;
+
+
+-- fudo_view_raw_discounts (Basado en ejemplo, sin 'fields')
+drop view if exists public.fudo_view_raw_discounts CASCADE;
+CREATE OR REPLACE VIEW public.fudo_view_raw_discounts AS
+SELECT
+    d.id_fudo, d.id_sucursal_fuente, d.fecha_extraccion_utc, d.payload_checksum,
+    (d.payload_json ->> 'id') AS discount_id,
+    (d.payload_json -> 'attributes' ->> 'amount')::FLOAT AS amount,
+    (d.payload_json -> 'attributes' ->> 'percentage')::FLOAT AS percentage,
+    (d.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN AS canceled,
+    (d.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id') AS sale_id,
+    d.payload_json AS original_payload
+FROM public.fudo_raw_discounts d
+ORDER BY d.id_fudo, d.id_sucursal_fuente, d.fecha_extraccion_utc DESC;
+
+
+-- fudo_view_raw_expenses (Basado en ejemplo, sin 'fields')
+drop view if exists public.fudo_view_raw_expenses CASCADE;
+CREATE OR REPLACE VIEW public.fudo_view_raw_expenses AS
+SELECT
+    e.id_fudo, e.id_sucursal_fuente, e.fecha_extraccion_utc, e.payload_checksum,
+    (e.payload_json ->> 'id') AS expense_id,
+    (e.payload_json -> 'attributes' ->> 'amount')::FLOAT AS amount,
+    (e.payload_json -> 'attributes' ->> 'description') AS description,
+    (e.payload_json -> 'attributes' ->> 'date')::TIMESTAMP WITH TIME ZONE AS expense_date,
+    (e.payload_json -> 'attributes' ->> 'receiptNumber') AS receipt_number,
+    (e.payload_json -> 'relationships' -> 'expenseCategory' -> 'data' ->> 'id') AS expense_category_id,
+    (e.payload_json -> 'relationships' -> 'paymentMethod' -> 'data' ->> 'id') AS payment_method_id,
+    (e.payload_json -> 'relationships' -> 'user' -> 'data' ->> 'id') AS user_id,
+    e.payload_json AS original_payload
+FROM public.fudo_raw_expenses e
+ORDER BY e.id_fudo, e.id_sucursal_fuente, e.fecha_extraccion_utc DESC;
+
+
+-- fudo_view_raw_expense_categories (Basado en ejemplo, sin 'fields')
+drop view if exists public.fudo_view_raw_expense_categories CASCADE;
+CREATE OR REPLACE VIEW public.fudo_view_raw_expense_categories AS
+SELECT
+    ec.id_fudo, ec.id_sucursal_fuente, ec.fecha_extraccion_utc, ec.payload_checksum,
+    (ec.payload_json ->> 'id') AS category_id,
+    (ec.payload_json -> 'attributes' ->> 'name') AS category_active,
+    (ec.payload_json -> 'attributes' ->> 'active')::BOOLEAN AS active,
+    (ec.payload_json -> 'attributes' ->> 'financialCategory') AS financial_category,
+    (ec.payload_json -> 'relationships' -> 'parentCategory' -> 'data' ->> 'id') AS parent_category_id,
+    ec.payload_json AS original_payload
+FROM public.fudo_raw_expense_categories ec
+ORDER BY ec.id_fudo, ec.id_sucursal_fuente, ec.fecha_extraccion_utc DESC;
+
+
+-- fudo_view_raw_ingredients (Basado en ejemplo, sin 'fields')
+drop view if exists public.fudo_view_raw_ingredients CASCADE;
+CREATE OR REPLACE VIEW public.fudo_view_raw_ingredients AS
+SELECT
+    i.id_fudo, i.id_sucursal_fuente, i.fecha_extraccion_utc, i.payload_checksum,
+    (i.payload_json ->> 'id') AS ingredient_id,
+    (i.payload_json -> 'attributes' ->> 'name') AS ingredient_name,
+    (i.payload_json -> 'attributes' ->> 'cost')::FLOAT AS cost,
+    (i.payload_json -> 'attributes' ->> 'stock')::FLOAT AS stock,
+    (i.payload_json -> 'attributes' ->> 'stockControl')::BOOLEAN AS stock_control,
+    (i.payload_json -> 'relationships' -> 'ingredientCategory' -> 'data' ->> 'id') AS ingredient_category_id,
+    i.payload_json AS original_payload
+FROM public.fudo_raw_ingredients i
+ORDER BY i.id_fudo, i.id_sucursal_fuente, i.fecha_extraccion_utc DESC;
+
+
+-- fudo_view_raw_kitchens (Basado en ejemplo, sin 'fields')
+drop view if exists public.fudo_view_raw_kitchens CASCADE;
+CREATE OR REPLACE VIEW public.fudo_view_raw_kitchens AS
+SELECT
+    k.id_fudo, k.id_sucursal_fuente, k.fecha_extraccion_utc, k.payload_checksum,
+    (k.payload_json ->> 'id') AS kitchen_id,
+    (k.payload_json -> 'attributes' ->> 'name') AS kitchen_name,
+    k.payload_json AS original_payload
+FROM public.fudo_raw_kitchens k
+ORDER BY k.id_fudo, k.id_sucursal_fuente, k.fecha_extraccion_utc DESC;
+
+
+-- fudo_view_raw_product_modifiers (Basado en ejemplo, sin 'fields')
+drop view if exists public.fudo_view_raw_product_modifiers CASCADE;
+CREATE OR REPLACE VIEW public.fudo_view_raw_product_modifiers AS
+SELECT
+    pm.id_fudo, pm.id_sucursal_fuente, pm.fecha_extraccion_utc, pm.payload_checksum,
+    (pm.payload_json ->> 'id') AS modifier_id,
+    (pm.payload_json -> 'attributes' ->> 'maxQuantity')::INTEGER AS max_quantity,
+    (pm.payload_json -> 'attributes' ->> 'price')::FLOAT AS price,
+    (pm.payload_json -> 'relationships' -> 'product' -> 'data' ->> 'id') AS product_id,
+    (pm.payload_json -> 'relationships' -> 'productModifiersGroup' -> 'data' ->> 'id') AS product_modifiers_group_id,
+    pm.payload_json AS original_payload
+FROM public.fudo_raw_product_modifiers pm
+ORDER BY pm.id_fudo, pm.id_sucursal_fuente, pm.fecha_extraccion_utc DESC;
+
+
+-- fudo_view_raw_roles (Basado en ejemplo, sin 'fields')
+drop view if exists public.fudo_view_raw_roles CASCADE;
+CREATE OR REPLACE VIEW public.fudo_view_raw_roles AS
+SELECT
+    r.id_fudo, r.id_sucursal_fuente, r.fecha_extraccion_utc, r.payload_checksum,
+    (r.payload_json ->> 'id') AS role_id,
+    (r.payload_json -> 'attributes' ->> 'isWaiter')::BOOLEAN AS is_waiter,
+    (r.payload_json -> 'attributes' ->> 'isDeliveryman')::BOOLEAN AS is_deliveryman,
+    (r.payload_json -> 'attributes' ->> 'name') AS role_name,
+    (r.payload_json -> 'attributes' -> 'permissions') AS permissions, -- Mantenemos como JSONB array
+    r.payload_json AS original_payload
+FROM public.fudo_raw_roles r
+ORDER BY r.id_fudo, r.id_sucursal_fuente, r.fecha_extraccion_utc DESC;
+
+
+-- fudo_view_raw_rooms (Basado en ejemplo, sin 'fields')
+drop view if exists public.fudo_view_raw_rooms CASCADE;
+CREATE OR REPLACE VIEW public.fudo_view_raw_rooms AS
+SELECT
+    r.id_fudo, r.id_sucursal_fuente, r.fecha_extraccion_utc, r.payload_checksum,
+    (r.payload_json ->> 'id') AS room_id,
+    (r.payload_json -> 'attributes' ->> 'name') AS room_name,
+    (r.payload_json -> 'relationships' -> 'tables' -> 'data') AS table_ids, -- Array de IDs de tablas
+    r.payload_json AS original_payload
+FROM public.fudo_raw_rooms r
+ORDER BY r.id_fudo, r.id_sucursal_fuente, r.fecha_extraccion_utc DESC;
+
+
+-- fudo_view_raw_tables (Basado en ejemplo, sin 'fields')
+drop view if exists public.fudo_view_raw_tables CASCADE;
+CREATE OR REPLACE VIEW public.fudo_view_raw_tables AS
+SELECT
+    t.id_fudo, t.id_sucursal_fuente, t.fecha_extraccion_utc, t.payload_checksum,
+    (t.payload_json ->> 'id') AS table_id,
+    (t.payload_json -> 'attributes' ->> 'column')::INTEGER AS "column",
+    (t.payload_json -> 'attributes' ->> 'number')::INTEGER AS table_number,
+    (t.payload_json -> 'attributes' ->> 'row')::INTEGER AS "row",
+    (t.payload_json -> 'attributes' ->> 'shape') AS shape,
+    (t.payload_json -> 'attributes' ->> 'size') AS size,
+    (t.payload_json -> 'relationships' -> 'room' -> 'data' ->> 'id') AS room_id,
+    t.payload_json AS original_payload
+FROM public.fudo_raw_tables t
+ORDER BY t.id_fudo, t.id_sucursal_fuente, t.fecha_extraccion_utc DESC;
+
+
+-- fudo_view_raw_users (Basado en ejemplo, sin 'fields')
+drop view if exists public.fudo_view_raw_users;
+CREATE OR REPLACE VIEW public.fudo_view_raw_users AS
+SELECT
+    u.id_fudo, u.id_sucursal_fuente, u.fecha_extraccion_utc, u.payload_checksum,
+    (u.payload_json ->> 'id') AS user_id,
+    (u.payload_json -> 'attributes' ->> 'active')::BOOLEAN AS active,
+    (u.payload_json -> 'attributes' ->> 'admin')::BOOLEAN AS admin,
+    (u.payload_json -> 'attributes' ->> 'email') AS email,
+    (u.payload_json -> 'attributes' ->> 'name') AS user_name,
+    (u.payload_json -> 'attributes' ->> 'promotionalCode') AS promotional_code,
+    (u.payload_json -> 'relationships' -> 'role' -> 'data' ->> 'id') AS role_id,
+    u.payload_json AS original_payload
+FROM public.fudo_raw_users u
+ORDER BY u.id_fudo, u.id_sucursal_fuente, u.fecha_extraccion_utc DESC;

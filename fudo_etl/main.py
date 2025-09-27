@@ -1,4 +1,3 @@
-# fudo_etl/main.py
 import logging
 import json
 from datetime import datetime, timezone
@@ -37,14 +36,11 @@ def parse_fudo_date(date_str: str | None) -> datetime | None:
 # --- FUNCIÓN PARA LA FASE DE TRANSFORMACIÓN Y CARGA AL DER ---
 def refresh_analytics_materialized_views(db_manager: DBManager):
     logger.info("==================================================")
-    logger.info("  Iniciando fase de Transformación (Creación/Refresco de MVs)")
+    logger.info("  Iniciando fase de Transformación (Creación/Refresco de MVs y Vistas RAW)")
     logger.info("==================================================")
 
-    # Definir el orden de refresco basado en dependencias.
-    # Es crucial CREAR y refrescar dimensiones antes que hechos que dependen de ellas.
-    # Cada tupla contiene (nombre_mv, sql_creacion_mv).
     materialized_views_configs = [
-        # mv_sucursales
+        # MVs del DER (ya existentes)
         ('mv_sucursales', """
             CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_sucursales AS
             SELECT
@@ -53,7 +49,6 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
             FROM public.config_fudo_branches
             WHERE is_active = TRUE;
         """),
-        # mv_rubros
         ('mv_rubros', """
             CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_rubros AS
             SELECT DISTINCT ON (id_fudo)
@@ -65,7 +60,6 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
                 payload_json -> 'attributes' ->> 'name' IS NOT NULL
             ORDER BY id_fudo, fecha_extraccion_utc DESC;
         """),
-        # mv_medio_pago
         ('mv_medio_pago', """
             CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_medio_pago AS
             SELECT DISTINCT ON (id_fudo)
@@ -77,7 +71,6 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
                 payload_json -> 'attributes' ->> 'name' IS NOT NULL
             ORDER BY id_fudo, fecha_extraccion_utc DESC;
         """),
-        # mv_productos
         ('mv_productos', """
             CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_productos AS
             SELECT DISTINCT ON (p.id_fudo)
@@ -90,7 +83,6 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
                 p.payload_json -> 'attributes' ->> 'name' IS NOT NULL
             ORDER BY p.id_fudo, p.fecha_extraccion_utc DESC;
         """),
-        # mv_sales_order
         ('mv_sales_order', """
             CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_sales_order AS
             SELECT DISTINCT ON (s.id_fudo, s.id_sucursal_fuente)
@@ -110,7 +102,6 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
                 s.id_sucursal_fuente IS NOT NULL
             ORDER BY s.id_fudo, s.id_sucursal_fuente, s.fecha_extraccion_utc DESC;
         """),
-        # mv_pagos
         ('mv_pagos', """
             CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_pagos AS
             SELECT DISTINCT ON (p.id_fudo, p.id_sucursal_fuente)
@@ -132,7 +123,6 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
                 frs.id_sucursal_fuente IS NOT NULL
             ORDER BY p.id_fudo, p.id_sucursal_fuente, p.fecha_extraccion_utc DESC;
         """),
-        # mv_sales_order_line
         ('mv_sales_order_line', """
             CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_sales_order_line AS
             SELECT DISTINCT ON (i.id_fudo, i.id_sucursal_fuente)
@@ -159,13 +149,195 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
         """)
     ]
 
-    for mv_name, create_sql in materialized_views_configs:
+    raw_views_configs = [
+        # fudo_view_raw_customers
+         ('fudo_view_raw_customers', """
+            DROP VIEW IF EXISTS public.fudo_view_raw_customers;
+            CREATE OR REPLACE VIEW public.fudo_view_raw_customers AS
+            SELECT
+                c.id_fudo, c.id_sucursal_fuente, c.fecha_extraccion_utc, c.payload_checksum,
+                (c.payload_json ->> 'id') AS customer_id, (c.payload_json -> 'attributes' ->> 'active')::BOOLEAN AS active,
+                (c.payload_json -> 'attributes' ->> 'address') AS address,
+                (c.payload_json -> 'attributes' ->> 'comment') AS comment,
+                (c.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE AS created_at,
+                (c.payload_json -> 'attributes' ->> 'discountPercentage')::FLOAT AS discount_percentage,
+                (c.payload_json -> 'attributes' ->> 'email') AS email,
+                (c.payload_json -> 'attributes' ->> 'firstSaleDate')::TIMESTAMP WITH TIME ZONE AS first_sale_date,
+                (c.payload_json -> 'attributes' ->> 'historicalSalesCount')::INTEGER AS historical_sales_count,
+                (c.payload_json -> 'attributes' ->> 'historicalTotalSpent')::FLOAT AS historical_total_spent,
+                (c.payload_json -> 'attributes' ->> 'houseAccountBalance')::FLOAT AS house_account_balance,
+                (c.payload_json -> 'attributes' ->> 'houseAccountEnabled')::BOOLEAN AS house_account_enabled,
+                (c.payload_json -> 'attributes' ->> 'lastSaleDate')::TIMESTAMP WITH TIME ZONE AS last_sale_date,
+                (c.payload_json -> 'attributes' ->> 'name') AS customer_name,
+                (c.payload_json -> 'attributes' ->> 'origin') AS origin,
+                (c.payload_json -> 'attributes' ->> 'phone') AS phone,
+                (c.payload_json -> 'attributes' ->> 'salesCount')::INTEGER AS sales_count,
+                (c.payload_json -> 'attributes' ->> 'vatNumber') AS vat_number,
+                (c.payload_json -> 'relationships' -> 'paymentMethod' -> 'data' ->> 'id') AS payment_method_id,
+                c.payload_json AS original_payload
+            FROM public.fudo_raw_customers c
+            ORDER BY c.id_fudo, c.id_sucursal_fuente, c.fecha_extraccion_utc DESC;
+        """),
+        # fudo_view_raw_discounts (¡ACTUALIZADA!)
+        ('fudo_view_raw_discounts', """
+            DROP VIEW IF EXISTS public.fudo_view_raw_discounts;
+            CREATE OR REPLACE VIEW public.fudo_view_raw_discounts AS
+            SELECT
+                d.id_fudo, d.id_sucursal_fuente, d.fecha_extraccion_utc, d.payload_checksum,
+                (d.payload_json ->> 'id') AS discount_id, (d.payload_json -> 'attributes' ->> 'amount')::FLOAT AS amount,
+                (d.payload_json -> 'attributes' ->> 'percentage')::FLOAT AS percentage,
+                (d.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN AS canceled,
+                (d.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id') AS sale_id,
+                d.payload_json AS original_payload
+            FROM public.fudo_raw_discounts d
+            ORDER BY d.id_fudo, d.id_sucursal_fuente, d.fecha_extraccion_utc DESC;
+        """),
+        # fudo_view_raw_expenses (¡ACTUALIZADA!)
+        ('fudo_view_raw_expenses', """
+            DROP VIEW IF EXISTS public.fudo_view_raw_expenses;
+            CREATE OR REPLACE VIEW public.fudo_view_raw_expenses AS
+            SELECT
+                e.id_fudo, e.id_sucursal_fuente, e.fecha_extraccion_utc, e.payload_checksum,
+                (e.payload_json ->> 'id') AS expense_id, (e.payload_json -> 'attributes' ->> 'amount')::FLOAT AS amount,
+                (e.payload_json -> 'attributes' ->> 'description') AS description,
+                (e.payload_json -> 'attributes' ->> 'date')::TIMESTAMP WITH TIME ZONE AS expense_date,
+                (e.payload_json -> 'attributes' ->> 'receiptNumber') AS receipt_number,
+                (e.payload_json -> 'relationships' -> 'expenseCategory' -> 'data' ->> 'id') AS expense_category_id,
+                (e.payload_json -> 'relationships' -> 'paymentMethod' -> 'data' ->> 'id') AS payment_method_id,
+                (e.payload_json -> 'relationships' -> 'user' -> 'data' ->> 'id') AS user_id,
+                e.payload_json AS original_payload
+            FROM public.fudo_raw_expenses e
+            ORDER BY e.id_fudo, e.id_sucursal_fuente, e.fecha_extraccion_utc DESC;
+        """),
+        # fudo_view_raw_expense_categories (¡ACTUALIZADA!)
+        ('fudo_view_raw_expense_categories', """
+            DROP VIEW IF EXISTS public.fudo_view_raw_expense_categories;
+            CREATE OR REPLACE VIEW public.fudo_view_raw_expense_categories AS
+            SELECT
+                ec.id_fudo, ec.id_sucursal_fuente, ec.fecha_extraccion_utc, ec.payload_checksum,
+                (ec.payload_json ->> 'id') AS category_id, (ec.payload_json -> 'attributes' ->> 'active')::BOOLEAN AS active,
+                (ec.payload_json -> 'attributes' ->> 'name') AS category_name,
+                (ec.payload_json -> 'attributes' ->> 'financialCategory') AS financial_category,
+                (ec.payload_json -> 'relationships' -> 'parentCategory' -> 'data' ->> 'id') AS parent_category_id,
+                ec.payload_json AS original_payload
+            FROM public.fudo_raw_expense_categories ec
+            ORDER BY ec.id_fudo, ec.id_sucursal_fuente, ec.fecha_extraccion_utc DESC;
+        """),
+        # fudo_view_raw_ingredients (¡ACTUALIZADA!)
+        ('fudo_view_raw_ingredients', """
+            DROP VIEW IF EXISTS public.fudo_view_raw_ingredients;
+            CREATE OR REPLACE VIEW public.fudo_view_raw_ingredients AS
+            SELECT
+                i.id_fudo, i.id_sucursal_fuente, i.fecha_extraccion_utc, i.payload_checksum,
+                (i.payload_json ->> 'id') AS ingredient_id, (i.payload_json -> 'attributes' ->> 'name') AS ingredient_name,
+                (i.payload_json -> 'attributes' ->> 'cost')::FLOAT AS cost,
+                (i.payload_json -> 'attributes' ->> 'stock')::FLOAT AS stock,
+                (i.payload_json -> 'attributes' ->> 'stockControl')::BOOLEAN AS stock_control,
+                (i.payload_json -> 'relationships' -> 'ingredientCategory' -> 'data' ->> 'id') AS ingredient_category_id,
+                i.payload_json AS original_payload
+            FROM public.fudo_raw_ingredients i
+            ORDER BY i.id_fudo, i.id_sucursal_fuente, i.fecha_extraccion_utc DESC;
+        """),
+        # fudo_view_raw_kitchens (¡ACTUALIZADA!)
+        ('fudo_view_raw_kitchens', """
+            DROP VIEW IF EXISTS public.fudo_view_raw_kitchens;
+            CREATE OR REPLACE VIEW public.fudo_view_raw_kitchens AS
+            SELECT
+                k.id_fudo, k.id_sucursal_fuente, k.fecha_extraccion_utc, k.payload_checksum,
+                (k.payload_json ->> 'id') AS kitchen_id, (k.payload_json -> 'attributes' ->> 'name') AS kitchen_name,
+                k.payload_json AS original_payload
+            FROM public.fudo_raw_kitchens k
+            ORDER BY k.id_fudo, k.id_sucursal_fuente, k.fecha_extraccion_utc DESC;
+        """),
+        # fudo_view_raw_product_modifiers (¡ACTUALIZADA!)
+        ('fudo_view_raw_product_modifiers', """
+            DROP VIEW IF EXISTS public.fudo_view_raw_product_modifiers;
+            CREATE OR REPLACE VIEW public.fudo_view_raw_product_modifiers AS
+            SELECT
+                pm.id_fudo, pm.id_sucursal_fuente, pm.fecha_extraccion_utc, pm.payload_checksum,
+                (pm.payload_json ->> 'id') AS modifier_id, (pm.payload_json -> 'attributes' ->> 'maxQuantity')::INTEGER AS max_quantity,
+                (pm.payload_json -> 'attributes' ->> 'price')::FLOAT AS price,
+                (pm.payload_json -> 'relationships' -> 'product' -> 'data' ->> 'id') AS product_id,
+                (pm.payload_json -> 'relationships' -> 'productModifiersGroup' -> 'data' ->> 'id') AS product_modifiers_group_id,
+                pm.payload_json AS original_payload
+            FROM public.fudo_raw_product_modifiers pm
+            ORDER BY pm.id_fudo, pm.id_sucursal_fuente, pm.fecha_extraccion_utc DESC;
+        """),
+        ('fudo_view_raw_roles', """
+            DROP VIEW IF EXISTS public.fudo_view_raw_roles;
+            CREATE OR REPLACE VIEW public.fudo_view_raw_roles AS
+            SELECT
+                r.id_fudo, r.id_sucursal_fuente, r.fecha_extraccion_utc, r.payload_checksum,
+                (r.payload_json ->> 'id') AS role_id, (r.payload_json -> 'attributes' ->> 'isWaiter')::BOOLEAN AS is_waiter,
+                (r.payload_json -> 'attributes' ->> 'isDeliveryman')::BOOLEAN AS is_deliveryman,
+                (r.payload_json -> 'attributes' ->> 'name') AS role_name,
+                (r.payload_json -> 'attributes' -> 'permissions') AS permissions,
+                r.payload_json AS original_payload
+            FROM public.fudo_raw_roles r
+            ORDER BY r.id_fudo, r.id_sucursal_fuente, r.fecha_extraccion_utc DESC;
+        """),
+        ('fudo_view_raw_rooms', """
+            DROP VIEW IF EXISTS public.fudo_view_raw_rooms;
+            CREATE OR REPLACE VIEW public.fudo_view_raw_rooms AS
+            SELECT
+                r.id_fudo, r.id_sucursal_fuente, r.fecha_extraccion_utc, r.payload_checksum,
+                (r.payload_json ->> 'id') AS room_id, (r.payload_json -> 'attributes' ->> 'name') AS room_name,
+                (r.payload_json -> 'relationships' -> 'tables' -> 'data') AS table_ids,
+                r.payload_json AS original_payload
+            FROM public.fudo_raw_rooms r
+            ORDER BY r.id_fudo, r.id_sucursal_fuente, r.fecha_extraccion_utc DESC;
+        """),
+        ('fudo_view_raw_tables', """
+            DROP VIEW IF EXISTS public.fudo_view_raw_tables;
+            CREATE OR REPLACE VIEW public.fudo_view_raw_tables AS
+            SELECT
+                t.id_fudo, t.id_sucursal_fuente, t.fecha_extraccion_utc, t.payload_checksum,
+                (t.payload_json ->> 'id') AS table_id, (t.payload_json -> 'attributes' ->> 'column')::INTEGER AS "column",
+                (t.payload_json -> 'attributes' ->> 'number')::INTEGER AS table_number,
+                (t.payload_json -> 'attributes' ->> 'row')::INTEGER AS "row",
+                (t.payload_json -> 'attributes' ->> 'shape') AS shape,
+                (t.payload_json -> 'attributes' ->> 'size') AS size,
+                (t.payload_json -> 'relationships' -> 'room' -> 'data' ->> 'id') AS room_id,
+                t.payload_json AS original_payload
+            FROM public.fudo_raw_tables t
+            ORDER BY t.id_fudo, t.id_sucursal_fuente, t.fecha_extraccion_utc DESC;
+        """),
+        ('fudo_view_raw_users', """
+            DROP VIEW IF EXISTS public.fudo_view_raw_users;
+            CREATE OR REPLACE VIEW public.fudo_view_raw_users AS
+            SELECT
+                u.id_fudo, u.id_sucursal_fuente, u.fecha_extraccion_utc, u.payload_checksum,
+                (u.payload_json ->> 'id') AS user_id, (u.payload_json -> 'attributes' ->> 'active')::BOOLEAN AS active,
+                (u.payload_json -> 'attributes' ->> 'admin')::BOOLEAN AS admin,
+                (u.payload_json -> 'attributes' ->> 'email') AS email, (u.payload_json -> 'attributes' ->> 'name') AS user_name,
+                (u.payload_json -> 'attributes' ->> 'promotionalCode') AS promotional_code,
+                (u.payload_json -> 'relationships' -> 'role' -> 'data' ->> 'id') AS role_id,
+                u.payload_json AS original_payload
+            FROM public.fudo_raw_users u
+            ORDER BY u.id_fudo, u.id_sucursal_fuente, u.fecha_extraccion_utc DESC;
+        """)
+    ]
+
+    # Iterar para crear/reemplazar las vistas RAW
+    for view_name, create_sql in raw_views_configs:
+        logger.info(f"  Procesando Vista RAW Desnormalizada: '{view_name}'...")
+        try:
+            db_manager.execute_query(create_sql)  # Ejecuta el CREATE OR REPLACE VIEW
+            logger.info(f"  Vista RAW '{view_name}' creada/reemplazada exitosamente.")
+        except Exception as e:
+            logger.error(f"  ERROR al procesar la Vista RAW '{view_name}': {e}", exc_info=True)
+            continue  # Continuar con las siguientes vistas aunque esta falle
+
+    # Luego, las MVs del DER (ya existentes y se refrescan)
+    for mv_name, create_sql in materialized_views_configs:  # Usa materialized_views_configs aquí
         logger.info(f"  Procesando Vista Materializada: '{mv_name}'...")
         try:
+            # Intentar crear la MV si no existe (la definición está en materialized_views_configs)
             logger.info(f"    Intentando crear MV '{mv_name}' si no existe...")
-            db_manager.execute_query(create_sql)
+            db_manager.execute_query(create_sql)  # Ejecuta el CREATE MV IF NOT EXISTS
             logger.info(f"    MV '{mv_name}' creada/existente.")
 
+            # Luego, refrescarla
             logger.info(f"    Refrescando MV '{mv_name}'...")
             db_manager.execute_query(f"REFRESH MATERIALIZED VIEW public.{mv_name};")
             logger.info(f"    MV '{mv_name}' refrescada exitosamente.")
@@ -175,27 +347,22 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
             continue 
 
     logger.info("==================================================")
-    logger.info("  Fase de Transformación (Creación/Refresco de MVs) FINALIZADA.")
+    logger.info("  Fase de Transformación (Creación/Refresco de MVs y Vistas RAW) FINALIZADA.")
     logger.info("==================================================")
 
-
-def run_fudo_raw_etl(db_manager: DBManager): # db_manager ahora se pasa como argumento
+def run_fudo_raw_etl(db_manager: DBManager):
     logger.info("==================================================")
     logger.info("  Iniciando proceso ETL RAW de Fudo - EXTRACT & LOAD")
     logger.info("==================================================")
-    
-    # db ya se pasa como argumento, no se crea aquí
     try:
         config = load_config()
         project_id = config.get("gcp_project_id")
-
-        # Reutilizar el db_manager pasado
-        metadata_manager = ETLMetadataManager(db_manager) # Usar db_manager pasado
-        authenticator = FudoAuthenticator(db_manager, config['fudo_auth_endpoint'], project_id) # Usar db_manager pasado
+        metadata_manager = ETLMetadataManager(db_manager)
+        authenticator = FudoAuthenticator(db_manager, config['fudo_auth_endpoint'], project_id)
         api_client = FudoApiClient(config['fudo_api_base_url'])
 
         logger.info("Obteniendo lista de sucursales activas de la base de datos...")
-        branches_config = db_manager.fetch_all( # Usar db_manager pasado
+        branches_config = db_manager.fetch_all(
             "SELECT id_sucursal, fudo_branch_identifier, sucursal_name, "
             "secret_manager_apikey_name, secret_manager_apisecret_name "
             "FROM public.config_fudo_branches WHERE is_active = TRUE"
@@ -211,56 +378,39 @@ def run_fudo_raw_etl(db_manager: DBManager): # db_manager ahora se pasa como arg
         ]
 
         for branch_data in branches_config:
-            id_sucursal_internal = branch_data[0]
-            fudo_branch_id = branch_data[1]
-            branch_name = branch_data[2]
-            api_key_secret_name = branch_data[3]
-            api_secret_secret_name = branch_data[4]
-
+            id_sucursal_internal, fudo_branch_id, branch_name, api_key_secret_name, api_secret_secret_name = branch_data
             logger.info(f"\n--- Procesando Sucursal: '{branch_name}' (ID interno: '{id_sucursal_internal}') ---")
 
             try:
                 token = authenticator.get_valid_token(
-                    id_sucursal_internal, 
-                    api_key_secret_name, 
-                    api_secret_secret_name
+                    id_sucursal_internal, api_key_secret_name, api_secret_secret_name
                 )
                 api_client.set_auth_token(token)
-                logger.debug(f"Token válido establecido para {id_sucursal_internal}.")
 
                 for entity in entities_to_extract:
                     raw_table_name = f"fudo_raw_{entity.replace('-', '_')}"
+                    logger.info(f"  Extrayendo entidad '{entity}'...")
 
-                    logger.info(f"  Extrayendo entidad '{entity}' para sucursal '{id_sucursal_internal}'...")
-                    
                     try:
-                        last_extracted_ts = metadata_manager.get_last_extraction_timestamp(
-                            id_sucursal_internal, entity
-                        )
-                        
-                        raw_data_records_from_api = api_client.get_data(
-                            entity, 
-                            id_sucursal_internal,
-                            last_extracted_ts 
-                        )
-                        
+                        last_extracted_ts = metadata_manager.get_last_extraction_timestamp(id_sucursal_internal, entity)
+                        raw_data_records_from_api = api_client.get_data(entity, id_sucursal_internal, last_extracted_ts)
+
                         if raw_data_records_from_api:
-                            logger.info(f"    {len(raw_data_records_from_api)} registros extraídos de '{entity}'. Preparando para carga en '{raw_table_name}'...")
-                            
                             prepared_records_for_db = []
                             for record in raw_data_records_from_api:
-                                fudo_record_id = record.get('id', str(uuid.uuid4())) 
-
-                                last_updated_fudo = None
+                                fudo_record_id = record.get('id', str(uuid.uuid4()))
                                 attributes = record.get('attributes', {})
+                                last_updated_fudo = None
 
                                 if entity == 'sales':
-                                    last_updated_fudo = parse_fudo_date(attributes.get('closedAt'))
-                                    if last_updated_fudo is None:
-                                        last_updated_fudo = parse_fudo_date(attributes.get('createdAt'))
-                                elif entity in ['customers', 'expenses', 'items', 'payments', 'products', 'discounts', 'ingredients', 'roles', 'tables', 'users', 'expense_categories', 'kitchens', 'product_categories', 'product_modifiers', 'rooms']:
+                                    last_updated_fudo = parse_fudo_date(attributes.get('closedAt')) or \
+                                                        parse_fudo_date(attributes.get('createdAt'))
+                                elif entity in ['customers', 'expenses', 'items', 'payments', 'products',
+                                                'discounts', 'ingredients', 'roles', 'tables', 'users',
+                                                'expense_categories', 'kitchens', 'product_categories',
+                                                'product_modifiers', 'rooms']:
                                     last_updated_fudo = parse_fudo_date(attributes.get('createdAt'))
-                                
+
                                 payload_str = json.dumps(record, sort_keys=True)
                                 payload_checksum = md5(payload_str.encode('utf-8')).hexdigest()
 
@@ -273,38 +423,26 @@ def run_fudo_raw_etl(db_manager: DBManager): # db_manager ahora se pasa como arg
                                     'payload_checksum': payload_checksum
                                 })
 
-                            db_manager.insert_raw_data(raw_table_name, prepared_records_for_db) # Usar db_manager pasado
-                            logger.info(f"    {len(prepared_records_for_db)} registros cargados en '{raw_table_name}'.")
-                            
+                            db_manager.insert_raw_data(raw_table_name, prepared_records_for_db)
                             metadata_manager.update_last_extraction_timestamp(
                                 id_sucursal_internal, entity, datetime.now(timezone.utc)
                             )
                         else:
-                            logger.info(f"    No se extrajeron nuevos registros para '{entity}' (o no hubo actividad relevante desde el último filtro GTE).")
-
-                    except ConnectionError as ce:
-                        logger.error(f"  Fallo de conexión o reintentos agotados para entidad '{entity}' de sucursal '{id_sucursal_internal}': {ce}", exc_info=True)
-                        continue
+                            logger.info(f"    No se extrajeron nuevos registros para '{entity}'.")
                     except Exception as e:
-                        logger.error(f"  Error inesperado al procesar entidad '{entity}' para sucursal '{id_sucursal_internal}': {e}", exc_info=True)
+                        logger.error(f"  Error al procesar entidad '{entity}': {e}", exc_info=True)
                         continue
             except Exception as e:
-                logger.error(f"Error crítico al procesar sucursal '{branch_name}' ({id_sucursal_internal}): {e}", exc_info=True)
-                continue 
-            
-            time.sleep(1) 
+                logger.error(f"Error crítico en sucursal '{branch_name}': {e}", exc_info=True)
+                continue
 
-        # --- LLAMADA A LA FASE DE TRANSFORMACIÓN DESPUÉS DE LA EXTRACCIÓN RAW COMPLETA ---
-        refresh_analytics_materialized_views(db_manager) # Usar db_manager pasado
-        # ----------------------------------------------------------------------------------
+            time.sleep(1)
 
+        refresh_analytics_materialized_views(db_manager)
     except Exception as e:
-        logger.critical(f"ERROR FATAL en el proceso ETL RAW principal: {e}", exc_info=True)
-        print(f"ERROR FATAL: {e}")
+        logger.critical(f"ERROR FATAL en el ETL RAW principal: {e}", exc_info=True)
     finally:
-        # La conexión se cerrará en la función main()
         pass 
-
 
 # --- FUNCIÓN PARA DESPLEGAR LA ESTRUCTURA INICIAL DE FUDO EN LA DB ---
 def deploy_fudo_database_structure(db_manager: DBManager, ddl_script_path: str):
@@ -315,12 +453,10 @@ def deploy_fudo_database_structure(db_manager: DBManager, ddl_script_path: str):
         # Leer el script DDL completo
         current_dir = os.path.dirname(__file__)
         absolute_ddl_path = os.path.join(current_dir, ddl_script_path)
-        
-        # --- CORRECCIÓN FINAL AQUÍ: USAR absolute_ddl_path ---
+
         with open(absolute_ddl_path, 'r', encoding='utf-8') as f:
-        # -----------------------------------------------------
             sql_script_content = f.read()
-        
+
         db_manager.execute_sql_script(sql_script_content)
         logger.info("Estructura de la base de datos Fudo desplegada/actualizada exitosamente.")
     except Exception as e:
@@ -333,14 +469,13 @@ def deploy_fudo_database_structure(db_manager: DBManager, ddl_script_path: str):
 if __name__ == "__main__":
     # --- FASE DE DESPLIEGUE INICIAL Y EJECUCIÓN REGULAR ---
     config = load_config()
-    db_conn_string = config['db_connection_string'] # La cadena de conexión del ETL (apunta a la DB 'ginesta')
+    db_conn_string = config['db_connection_string']  # La cadena de conexión del ETL (apunta a la DB 'ginesta')
 
     db_for_all_phases = None
     try:
         db_for_all_phases = DBManager(db_conn_string)
 
         # Paso 1: Ejecutar el script DDL maestro para crear/actualizar toda la estructura.
-        # Esto se puede ejecutar siempre, ya que usa CREATE IF NOT EXISTS.
         logger.info("Iniciando fase de DESPLIEGUE DE ESTRUCTURA...")
         deploy_fudo_database_structure(db_for_all_phases, 'sql/deploy_fudo_structure.sql')
         logger.info("Fase de DESPLIEGUE DE ESTRUCTURA completada.")
