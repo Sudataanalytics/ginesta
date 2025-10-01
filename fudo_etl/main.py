@@ -198,13 +198,24 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
             CREATE OR REPLACE VIEW public.fudo_view_raw_expenses AS
             SELECT
                 e.id_fudo, e.id_sucursal_fuente, e.fecha_extraccion_utc, e.payload_checksum,
-                (e.payload_json ->> 'id') AS expense_id, (e.payload_json -> 'attributes' ->> 'amount')::FLOAT AS amount,
+                (e.payload_json ->> 'id') AS expense_id,
+                (e.payload_json -> 'attributes' ->> 'amount')::FLOAT AS amount,
                 (e.payload_json -> 'attributes' ->> 'description') AS description,
                 (e.payload_json -> 'attributes' ->> 'date')::TIMESTAMP WITH TIME ZONE AS expense_date,
+                (e.payload_json -> 'attributes' ->> 'status') AS status,
+                (e.payload_json -> 'attributes' ->> 'dueDate')::TIMESTAMP WITH TIME ZONE AS due_date,
+                (e.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN AS canceled,
+                (e.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE AS created_at,
+                (e.payload_json -> 'attributes' ->> 'paymentDate')::TIMESTAMP WITH TIME ZONE AS payment_date,
                 (e.payload_json -> 'attributes' ->> 'receiptNumber') AS receipt_number,
-                (e.payload_json -> 'relationships' -> 'expenseCategory' -> 'data' ->> 'id') AS expense_category_id,
-                (e.payload_json -> 'relationships' -> 'paymentMethod' -> 'data' ->> 'id') AS payment_method_id,
+                (e.payload_json -> 'attributes' ->> 'useInCashCount')::BOOLEAN AS use_in_cash_count,
                 (e.payload_json -> 'relationships' -> 'user' -> 'data' ->> 'id') AS user_id,
+                (e.payload_json -> 'relationships' -> 'provider' -> 'data' ->> 'id') AS provider_id,
+                (e.payload_json -> 'relationships' -> 'receiptType' -> 'data' ->> 'id') AS receipt_type_id,
+                (e.payload_json -> 'relationships' -> 'cashRegister' -> 'data' ->> 'id') AS cash_register_id,
+                (e.payload_json -> 'relationships' -> 'expenseItems' -> 'data') AS expense_items,
+                (e.payload_json -> 'relationships' -> 'paymentMethod' -> 'data' ->> 'id') AS payment_method_id,
+                (e.payload_json -> 'relationships' -> 'expenseCategory' -> 'data' ->> 'id') AS expense_category_id,
                 e.payload_json AS original_payload
             FROM public.fudo_raw_expenses e
             ORDER BY e.id_fudo, e.id_sucursal_fuente, e.fecha_extraccion_utc DESC;
