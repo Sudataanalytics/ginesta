@@ -1,34 +1,35 @@
-# fudo_etl/cloudbuild.yaml
+# cloudbuild.yaml (en la raíz de 'grupo ginesta')
 steps:
 # Build the Docker image
 - name: 'gcr.io/cloud-builders/docker'
-  args: ['build', '-t', 'us-central1-docker.pkg.dev/ginestafudo/ginesta-fudo-etl-repo/ginesta-fudo-etl:${_TAG_NAME}', '-f', 'Dockerfile', '.']
+  # El 'fudo_etl' al final del comando 'build' indica el contexto del Dockerfile
+  # Y el '-f Dockerfile' dice que el Dockerfile está en ese contexto
+  args: ['build', '-t', 'us-central1-docker.pkg.dev/${PROJECT_ID}/ginesta-fudo-etl-repo/ginesta-fudo-etl:${_TAG_NAME}', '-f', 'fudo_etl/Dockerfile', 'fudo_etl']
   id: Build
-  dir: fudo_etl
 
 # Push the Docker image to Artifact Registry
 - name: 'gcr.io/cloud-builders/docker'
-  args: ['push', 'us-central1-docker.pkg.dev/ginestafudo/ginesta-fudo-etl-repo/ginesta-fudo-etl:${_TAG_NAME}']
+  args: ['push', 'us-central1-docker.pkg.dev/${PROJECT_ID}/ginesta-fudo-etl-repo/ginesta-fudo-etl:${_TAG_NAME}']
   id: Push
-  dir: fudo_etl
 
 # Deploy to Cloud Run Jobs
-- name: 'gcr.io/cloud-builders/gcloud'
+- name: 'gcr.io/google.com/cloudsdk/cloud-sdk'
   args: [
-      'run', 'jobs', 'deploy', 'ginesta-fudo-etl-job',
-      '--image', 'us-central1-docker.pkg.dev/ginestafudo/ginesta-fudo-etl-repo/ginesta-fudo-etl:${_TAG_NAME}',
-      '--region', 'us-central1',
-      '--set-secrets', 'FUDO_CHALE_APIKEY=fudo-chale-apikey:latest,FUDO_CHALE_APISECRET=fudo-chale-apisecret:latest,FUDO_QUITO_BAR_APIKEY=fudo-quito-bar-apikey:latest,FUDO_QUITO_BAR_APISECRET=fudo-quito-bar-apisecret:latest,FUDO_NEBRASKA_SAS_APIKEY=fudo-nebraska-sas-apikey:latest,FUDO_NEBRASKA_SAS_APISECRET=fudo-nebraska-sas-apisecret:latest,FUDO_PUNTO_CRIOLLO_APIKEY=fudo-punto-criollo-apikey:latest,FUDO_PUNTO_CRIOLLO_APISECRET=fudo-punto-criollo-apisecret:latest,DONWEB_ADMIN_CONNECTION_STRING=donweb-admin-connection-string:latest,DB_CONNECTION_STRING=donweb-db-connection-string:latest,TARGET_DATABASE_NAME=target-database-name:latest,FUDO_AUTH_ENDPOINT=fudo-auth-endpoint:latest,FUDO_API_BASE_URL=fudo-api-base-url:latest,GCP_PROJECT_ID=gcp-project-id:latest',
-      '--task-timeout=7200s',
+      'gcloud', 'run', 'jobs', 'deploy', 'ginesta-fudo-etl-job', # Nombre del Cloud Run Job
+      '--image', 'us-central1-docker.pkg.dev/${PROJECT_ID}/ginesta-fudo-etl-repo/ginesta-fudo-etl:${_TAG_NAME}',
+      '--region', 'us-central1', # ¡Asegúrate de que esta región coincida con tu Artifact Registry y Cloud Run!
+      # --- Mapeo de TODOS tus secretos aquí (nombres de Secret Manager) ---
+      # Cada par es NOMBRE_ENV_VAR_EN_PYTHON=nombre_secreto_en_SecretManager:latest
+      '--set-secrets', 'FUDO_CHALE_APIKEY=fudo-chale-apikey:latest,FUDO_CHALE_APISECRET=fudo-chale-apisecret:latest,FUDO_QUITO_BAR_APIKEY=fudo-quito-bar-apikey:latest,FUDO_QUITO_BAR_APISECRET=fudo-quito-bar-apisecret:latest,FUDO_NEBRASKA_SAS_APIKEY=fudo-nebraska-sas-apikey:latest,FUDO_NEBRASKA_SAS_APISECRET=fudo-nebraska-sas-apisecret:latest,FUDO_PUNTO_CRIOLLO_PERON_APIKEY=fudo-punto-criollo-peron-apikey:latest,FUDO_PUNTO_CRIOLLO_PERON_APISECRET=fudo-punto-criollo-peron-apisecret:latest,FUDO_PUNTO_CRIOLLO_GUEMES_APIKEY=fudo-punto-criollo-guemes-apikey:latest,FUDO_PUNTO_CRIOLLO_GUEMES_APISECRET=fudo-punto-criollo-guemes-apisecret:latest,DONWEB_ADMIN_CONNECTION_STRING=donweb-admin-connection-string:latest,DB_CONNECTION_STRING=donweb-db-connection-string:latest,TARGET_DATABASE_NAME=target-database-name:latest,FUDO_AUTH_ENDPOINT=fudo-auth-endpoint:latest,FUDO_API_BASE_URL=fudo-api-base-url:latest,GCP_PROJECT_ID=gcp-project-id:latest',
+      '--task-timeout=7200s', # Aumentado a 2 horas (120 minutos * 60 segundos)
       '--max-retries=3',
       '--cpu=1',
-      '--memory=4Gi'
+      '--memory=4Gi' # Aumentado a 4Gi para manejar volúmenes grandes de datos
   ]
   id: Deploy
-  dir: fudo_etl
 
 images:
-- 'us-central1-docker.pkg.dev/ginestafudo/ginesta-fudo-etl-repo/ginesta-fudo-etl:${_TAG_NAME}'
+- 'us-central1-docker.pkg.dev/${PROJECT_ID}/ginesta-fudo-etl-repo/ginesta-fudo-etl:${_TAG_NAME}'
 
 substitutions:
   _TAG_NAME: 'latest'

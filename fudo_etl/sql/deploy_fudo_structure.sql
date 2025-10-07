@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS public.config_fudo_branches (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+DELETE FROM public.config_fudo_branches WHERE id_sucursal = 'punto_criollo';
 
 -- Insertar las sucursales Fudo iniciales
 INSERT INTO public.config_fudo_branches (id_sucursal, fudo_branch_identifier, sucursal_name, secret_manager_apikey_name, secret_manager_apisecret_name)
@@ -74,7 +75,15 @@ ON CONFLICT (id_sucursal) DO UPDATE SET
     updated_at = CURRENT_TIMESTAMP;
 
 INSERT INTO public.config_fudo_branches (id_sucursal, fudo_branch_identifier, sucursal_name, secret_manager_apikey_name, secret_manager_apisecret_name)
-VALUES ('punto_criollo', 'MTVANDg2OTc=', 'Punto Criollo', 'FUDO_PUNTO_CRIOLLO_APIKEY', 'FUDO_PUNTO_CRIOLLO_APISECRET')
+VALUES ('punto_criollo-peron', 'MTVANDg2OTc=', 'Punto Criollo Peron', 'FUDO_PUNTO_CRIOLLO_PERON_APIKEY', 'FUDO_PUNTO_CRIOLLO_PERON_APISECRET')
+ON CONFLICT (id_sucursal) DO UPDATE SET
+    fudo_branch_identifier = EXCLUDED.fudo_branch_identifier, sucursal_name = EXCLUDED.sucursal_name,
+    secret_manager_apikey_name = EXCLUDED.secret_manager_apikey_name, secret_manager_apisecret_name = EXCLUDED.secret_manager_apisecret_name,
+    updated_at = CURRENT_TIMESTAMP;
+
+-- Añadir la nueva sucursal 'punto_criollo-guemes'
+INSERT INTO public.config_fudo_branches (id_sucursal, fudo_branch_identifier, sucursal_name, secret_manager_apikey_name, secret_manager_apisecret_name)
+VALUES ('punto_criollo-guemes', 'MTZAMjc1MTM5', 'Punto Criollo Guemes', 'FUDO_PUNTO_CRIOLLO_GUEMES_APIKEY', 'FUDO_PUNTO_CRIOLLO_GUEMES_APISECRET')
 ON CONFLICT (id_sucursal) DO UPDATE SET
     fudo_branch_identifier = EXCLUDED.fudo_branch_identifier, sucursal_name = EXCLUDED.sucursal_name,
     secret_manager_apikey_name = EXCLUDED.secret_manager_apikey_name, secret_manager_apisecret_name = EXCLUDED.secret_manager_apisecret_name,
