@@ -365,12 +365,14 @@ SELECT DISTINCT ON (s.id_fudo, s.id_sucursal_fuente)
     COALESCE(
         (s.payload_json -> 'attributes' ->> 'closedAt')::TIMESTAMP WITH TIME ZONE,
         (s.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE
-    ) AS date_order
+    ) AS date_order,
+    s.id_sucursal_fuente AS id_sucursal -- <--- ¡ESTA ES LA COLUMNA CRÍTICA!
 FROM public.fudo_raw_sales s
 WHERE
     s.payload_json ->> 'id' IS NOT NULL AND
     s.payload_json -> 'attributes' ->> 'total' IS NOT NULL AND
-    (s.payload_json -> 'attributes' ->> 'saleState') = 'CLOSED'
+    (s.payload_json -> 'attributes' ->> 'saleState') = 'CLOSED' AND
+    s.id_sucursal_fuente IS NOT NULL -- <--- ¡ESTA ES LA CONDICIÓN CRÍTICA!
 ORDER BY s.id_fudo, s.id_sucursal_fuente, s.fecha_extraccion_utc DESC;
 
 -- Pagos (DER)
