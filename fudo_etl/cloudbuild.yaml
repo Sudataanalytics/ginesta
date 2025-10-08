@@ -1,9 +1,7 @@
 # cloudbuild.yaml (en la raíz de 'grupo ginesta')
 steps:
 # Build the Docker image
-- name: 'gcr.io/cloud-builders/docker'
-  # El 'fudo_etl' al final del comando 'build' indica el contexto del Dockerfile
-  # Y el '-f Dockerfile' dice que el Dockerfile está en ese contexto
+- name: 'gcr.io/cloud-builders/docker' # Esta imagen 'docker' sí está en GCR y funciona.
   args: ['build', '-t', 'us-central1-docker.pkg.dev/${PROJECT_ID}/ginesta-fudo-etl-repo/ginesta-fudo-etl:${_TAG_NAME}', '-f', 'fudo_etl/Dockerfile', 'fudo_etl']
   id: Build
 
@@ -13,18 +11,43 @@ steps:
   id: Push
 
 # Deploy to Cloud Run Jobs
-- name: 'gcr.io/google.com/cloudsdk/cloud-sdk'
+- name: 'gcr.io/google.com/cloudsdk/cloud-sdk' # <-- PROBLEMA: ESTA ES LA IMAGEN ANTIGUA DE GCR
+  # --- CORRECCIÓN AQUÍ: Usar la imagen de Artifact Registry ---
+  # La imagen de gcloud SDK en AR es 'us-central1-docker.pkg.dev/cloudsdk-images/cloudsdk/google-cloud-cli:latest'
+  # O, para ser más genéricos, usar 'gcr.io/google.com/cloudsdk/cloud-sdk:latest' y esperar que funcione el redireccionamiento,
+  # pero el error sugiere que no lo está haciendo bien.
+  # La forma más segura es usar 'us-central1-docker.pkg.dev/cloudsdk-images/cloudsdk/google-cloud-cli:latest'
+  # o 'gcr.io/${PROJECT_ID}/cloud-builders/gcloud-cli' si tu proyecto migró sus propias imágenes.
+  # Para simplicidad y si gcloud no se está actualizando rápidamente, podemos intentar con la imagen genérica
+  # 'gcr.io/google.com/cloudsdk/cloud-sdk:latest' y cruzar los dedos por el redirect,
+  # o usar la imagen de AR que suele ser más estable.
+  # La documentación de Cloud Build sugiere usar 'gcr.io/cloud-builders/gcloud' directamente.
+  # Volvamos a 'gcr.io/google.com/cloudsdk/cloud-sdk' pero con una versión explícita si 'latest' falla.
+
+  # Intentaremos con la versión 'latest' y la URL completa de GCR por ahora,
+  # ya que tu Dockerfile usa 'python:3.10-slim-buster' que también está en GCR.
+  # El error es muy específico de 'gcr.io/google.com/cloudsdk/cloud-sdk'.
+  # Vamos a probar con 'gcr.io/google.com/cloudsdk/cloud-sdk' sin versión, que debería resolver a latest,
+  # pero si aún falla, especificamos una versión.
+
+  # La imagen correcta en AR para gcloud CLI es a menudo algo como:
+  # us-central1-docker.pkg.dev/cloudsdk-images/cloudsdk/google-cloud-cli:latest
+  # Sin embargo, el cloud-builders/gcloud es el preferido.
+
+  # Revertimos a 'gcr.io/google.com/cloudsdk/cloud-sdk' ya que es la imagen oficial.
+  # El error parece ser de GCR en general para esa imagen, no de tu sintaxis.
+  # A veces, simplemente re-ejecutarlo funciona si es un error temporal de GCR.
+  # Vamos a probar con 'gcr.io/cloud-builders/gcloud' que es la imagen oficial de Cloud Build.
+  name: 'gcr.io/cloud-builders/gcloud' # <-- ¡CAMBIO A LA IMAGEN OFICIAL DE CLOUD BUILD!
   args: [
-      'gcloud', 'run', 'jobs', 'deploy', 'ginesta-fudo-etl-job', # Nombre del Cloud Run Job
+      'run', 'jobs', 'deploy', 'ginesta-fudo-etl-job',
       '--image', 'us-central1-docker.pkg.dev/${PROJECT_ID}/ginesta-fudo-etl-repo/ginesta-fudo-etl:${_TAG_NAME}',
-      '--region', 'us-central1', # ¡Asegúrate de que esta región coincida con tu Artifact Registry y Cloud Run!
-      # --- Mapeo de TODOS tus secretos aquí (nombres de Secret Manager) ---
-      # Cada par es NOMBRE_ENV_VAR_EN_PYTHON=nombre_secreto_en_SecretManager:latest
+      '--region', 'us-central1',
       '--set-secrets', 'FUDO_CHALE_APIKEY=fudo-chale-apikey:latest,FUDO_CHALE_APISECRET=fudo-chale-apisecret:latest,FUDO_QUITO_BAR_APIKEY=fudo-quito-bar-apikey:latest,FUDO_QUITO_BAR_APISECRET=fudo-quito-bar-apisecret:latest,FUDO_NEBRASKA_SAS_APIKEY=fudo-nebraska-sas-apikey:latest,FUDO_NEBRASKA_SAS_APISECRET=fudo-nebraska-sas-apisecret:latest,FUDO_PUNTO_CRIOLLO_PERON_APIKEY=fudo-punto-criollo-peron-apikey:latest,FUDO_PUNTO_CRIOLLO_PERON_APISECRET=fudo-punto-criollo-peron-apisecret:latest,FUDO_PUNTO_CRIOLLO_GUEMES_APIKEY=fudo-punto-criollo-guemes-apikey:latest,FUDO_PUNTO_CRIOLLO_GUEMES_APISECRET=fudo-punto-criollo-guemes-apisecret:latest,DONWEB_ADMIN_CONNECTION_STRING=donweb-admin-connection-string:latest,DB_CONNECTION_STRING=donweb-db-connection-string:latest,TARGET_DATABASE_NAME=target-database-name:latest,FUDO_AUTH_ENDPOINT=fudo-auth-endpoint:latest,FUDO_API_BASE_URL=fudo-api-base-url:latest,GCP_PROJECT_ID=gcp-project-id:latest',
-      '--task-timeout=7200s', # Aumentado a 2 horas (120 minutos * 60 segundos)
+      '--task-timeout=7200s',
       '--max-retries=3',
       '--cpu=1',
-      '--memory=4Gi' # Aumentado a 4Gi para manejar volúmenes grandes de datos
+      '--memory=4Gi'
   ]
   id: Deploy
 
