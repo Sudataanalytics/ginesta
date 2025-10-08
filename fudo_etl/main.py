@@ -361,19 +361,23 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
     logger.info("  Fase de Transformación (Creación/Refresco de MVs y Vistas RAW) FINALIZADA.")
     logger.info("==================================================")
 
-def run_fudo_raw_etl(db_manager: DBManager):
+def run_fudo_raw_etl(db_manager: DBManager): # db_manager ahora se pasa como argumento
     logger.info("==================================================")
     logger.info("  Iniciando proceso ETL RAW de Fudo - EXTRACT & LOAD")
     logger.info("==================================================")
+    
+    # db ya se pasa como argumento, no se crea aquí
     try:
         config = load_config()
         project_id = config.get("gcp_project_id")
-        metadata_manager = ETLMetadataManager(db_manager)
-        authenticator = FudoAuthenticator(db_manager, config['fudo_auth_endpoint'], project_id)
+
+        # Reutilizar el db_manager pasado
+        metadata_manager = ETLMetadataManager(db_manager) # Usar db_manager pasado
+        authenticator = FudoAuthenticator(db_manager, config['fudo_auth_endpoint'], project_id) # Usar db_manager pasado
         api_client = FudoApiClient(config['fudo_api_base_url'])
 
         logger.info("Obteniendo lista de sucursales activas de la base de datos...")
-        branches_config = db_manager.fetch_all(
+        branches_config = db_manager.fetch_all( # Usar db_manager pasado
             "SELECT id_sucursal, fudo_branch_identifier, sucursal_name, "
             "secret_manager_apikey_name, secret_manager_apisecret_name "
             "FROM public.config_fudo_branches WHERE is_active = TRUE"
@@ -389,39 +393,63 @@ def run_fudo_raw_etl(db_manager: DBManager):
         ]
 
         for branch_data in branches_config:
-            id_sucursal_internal, fudo_branch_id, branch_name, api_key_secret_name, api_secret_secret_name = branch_data
+            id_sucursal_internal = branch_data[0]
+            fudo_branch_id = branch_data[1]
+            branch_name = branch_data[2]
+            api_key_secret_name = branch_data[3]
+            api_secret_secret_name = branch_data[4]
+
             logger.info(f"\n--- Procesando Sucursal: '{branch_name}' (ID interno: '{id_sucursal_internal}') ---")
 
             try:
                 token = authenticator.get_valid_token(
-                    id_sucursal_internal, api_key_secret_name, api_secret_secret_name
+                    id_sucursal_internal, 
+                    api_key_secret_name, 
+                    api_secret_secret_name
                 )
                 api_client.set_auth_token(token)
+                logger.debug(f"Token válido establecido para {id_sucursal_internal}.")
 
                 for entity in entities_to_extract:
                     raw_table_name = f"fudo_raw_{entity.replace('-', '_')}"
-                    logger.info(f"  Extrayendo entidad '{entity}'...")
 
+                    logger.info(f"  Extrayendo entidad '{entity}' para sucursal '{id_sucursal_internal}'...")
+                    
                     try:
-                        last_extracted_ts = metadata_manager.get_last_extraction_timestamp(id_sucursal_internal, entity)
-                        raw_data_records_from_api = api_client.get_data(entity, id_sucursal_internal, last_extracted_ts)
-
+                        last_extracted_ts = metadata_manager.get_last_extraction_timestamp(
+                            id_sucursal_internal, entity
+                        )
+                        # --- AÑADIR ESTE LOG CRÍTICO ---
+                        logger.info(f"    Usando last_extracted_ts para '{entity}': {last_extracted_ts}")
+                        # --------------------------------
+                        
+                        raw_data_records_from_api = api_client.get_data(
+                            entity, 
+                            id_sucursal_internal,
+                            last_extracted_ts 
+                        )
+                        
                         if raw_data_records_from_api:
+                            # --- AÑADIR LOG DE AUDITORÍA AQUÍ ---
+                            logger.info(f"    [AUDIT] '{entity}' extraídos de la API: {len(raw_data_records_from_api)} registros. Preparando para carga...")
+                            # ------------------------------------
+                            
                             prepared_records_for_db = []
                             for record in raw_data_records_from_api:
-                                fudo_record_id = record.get('id', str(uuid.uuid4()))
-                                attributes = record.get('attributes', {})
+                                fudo_record_id = record.get('id', str(uuid.uuid4())) 
+
                                 last_updated_fudo = None
+                                attributes = record.get('attributes', {})
 
                                 if entity == 'sales':
                                     last_updated_fudo = parse_fudo_date(attributes.get('closedAt')) or \
                                                         parse_fudo_date(attributes.get('createdAt'))
                                 elif entity in ['customers', 'expenses', 'items', 'payments', 'products',
                                                 'discounts', 'ingredients', 'roles', 'tables', 'users',
-                                                'expense_categories', 'kitchens', 'product_categories',
-                                                'product_modifiers', 'rooms']:
+                                                'expense-categories', 'kitchens', 'product-categories',
+                                                'product-modifiers', 'rooms']:
                                     last_updated_fudo = parse_fudo_date(attributes.get('createdAt'))
-
+                                
                                 payload_str = json.dumps(record, sort_keys=True)
                                 payload_checksum = md5(payload_str.encode('utf-8')).hexdigest()
 
@@ -435,6 +463,10 @@ def run_fudo_raw_etl(db_manager: DBManager):
                                 })
 
                             db_manager.insert_raw_data(raw_table_name, prepared_records_for_db)
+                            # --- AÑADIR LOG DE AUDITORÍA AQUÍ ---
+                            logger.info(f"    [AUDIT] '{entity}' cargados en DB: {len(prepared_records_for_db)} registros en '{raw_table_name}'.")
+                            # ------------------------------------
+                            
                             metadata_manager.update_last_extraction_timestamp(
                                 id_sucursal_internal, entity, datetime.now(timezone.utc)
                             )
@@ -442,19 +474,25 @@ def run_fudo_raw_etl(db_manager: DBManager):
                             logger.info(f"    No se extrajeron nuevos registros para '{entity}'.")
                     except Exception as e:
                         logger.error(f"  Error al procesar entidad '{entity}': {e}", exc_info=True)
+                        logger.error(f"    [AUDIT] '{entity}' extracción FALLIDA para sucursal '{id_sucursal_internal}'.") # Log de auditoría de fallo
                         continue
             except Exception as e:
                 logger.error(f"Error crítico en sucursal '{branch_name}': {e}", exc_info=True)
+                logger.error(f"    [AUDIT] Sucursal '{branch_name}' procesamiento FALLIDO.") # Log de auditoría de fallo crítico
                 continue
+            
+            time.sleep(1) # Pequeña pausa entre sucursales
 
-            time.sleep(1)
-
+        # --- LLAMADA A LA FASE DE TRANSFORMACIÓN DESPUÉS DE LA EXTRACCIÓN RAW COMPLETA ---
         refresh_analytics_materialized_views(db_manager)
-    except Exception as e:
-        logger.critical(f"ERROR FATAL en el ETL RAW principal: {e}", exc_info=True)
-    finally:
-        pass 
+        # ----------------------------------------------------------------------------------
 
+    except Exception as e:
+        logger.critical(f"ERROR FATAL en el proceso ETL RAW principal: {e}", exc_info=True)
+        print(f"ERROR FATAL: {e}") # Asegurar que se imprima a consola en caso de fallo crítico
+    finally:
+        # La conexión se cerrará en la función main()
+        pass
 # --- FUNCIÓN PARA DESPLEGAR LA ESTRUCTURA INICIAL DE FUDO EN LA DB ---
 def deploy_fudo_database_structure(db_manager: DBManager, ddl_script_path: str):
     logger.info("==================================================")
