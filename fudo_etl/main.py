@@ -94,48 +94,48 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
             CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_sales_order AS
             SELECT DISTINCT ON (s.id_fudo, s.id_sucursal_fuente)
                 (s.payload_json ->> 'id')::INTEGER AS id_order,
+                s.id_sucursal_fuente AS id_sucursal, -- Mantener id_sucursal
+                -- Crear una clave primaria compuesta para la MV
+                (s.payload_json ->> 'id') || '-' || s.id_sucursal_fuente AS order_key, -- <--- NUEVA CLAVE ÚNICA DE LA ORDEN
                 0.0::FLOAT AS amount_tax,
                 (s.payload_json -> 'attributes' ->> 'total')::FLOAT AS amount_total,
                 COALESCE(
                     (s.payload_json -> 'attributes' ->> 'closedAt')::TIMESTAMP WITH TIME ZONE,
                     (s.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE
-                ) AS date_order,
-                s.id_sucursal_fuente AS id_sucursal
+                ) AS date_order
             FROM public.fudo_raw_sales s
-            WHERE
-                s.payload_json ->> 'id' IS NOT NULL AND
-                s.payload_json -> 'attributes' ->> 'total' IS NOT NULL AND
-                (s.payload_json -> 'attributes' ->> 'saleState') = 'CLOSED' AND
-                s.id_sucursal_fuente IS NOT NULL
+            WHERE s.payload_json ->> 'id' IS NOT NULL AND s.payload_json -> 'attributes' ->> 'total' IS NOT NULL AND (s.payload_json -> 'attributes' ->> 'saleState') = 'CLOSED' AND s.id_sucursal_fuente IS NOT NULL
             ORDER BY s.id_fudo, s.id_sucursal_fuente, s.fecha_extraccion_utc DESC;
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_sales_order_id_sucursal ON public.mv_sales_order (id_order, id_sucursal);
+            -- El índice único ahora es sobre la nueva columna 'order_key'
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_sales_order_order_key ON public.mv_sales_order (order_key);
         """),
         ('mv_pagos', """
             CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_pagos AS
             SELECT DISTINCT ON (p.id_fudo, p.id_sucursal_fuente)
-                (p.payload_json ->> 'id')::INTEGER AS id,
+                (p.payload_json ->> 'id')::INTEGER AS id, -- ID del pago de Fudo
+                p.id_sucursal_fuente AS id_sucursal, -- Mantener id_sucursal
+                -- Crear una clave primaria compuesta para el Pago
+                (p.payload_json ->> 'id') || '-' || p.id_sucursal_fuente AS payment_key, -- <--- NUEVA CLAVE ÚNICA DEL PAGO
                 (p.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id')::INTEGER AS pos_order_id,
                 (p.payload_json -> 'relationships' -> 'paymentMethod' -> 'data' ->> 'id')::INTEGER AS id_payment,
                 (p.payload_json -> 'attributes' ->> 'amount')::FLOAT AS amount,
                 (p.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE AS payment_date,
-                frs.id_sucursal_fuente AS id_sucursal
+                -- Necesitamos el order_key de la venta para la FK
+                (frs.payload_json ->> 'id') || '-' || frs.id_sucursal_fuente AS order_key_fk -- <--- FK a Sales_order.order_key
             FROM public.fudo_raw_payments p
             JOIN public.fudo_raw_sales frs ON (p.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id')::INTEGER = (frs.payload_json ->> 'id')::INTEGER
-            WHERE
-                p.payload_json ->> 'id' IS NOT NULL AND
-                (p.payload_json -> 'attributes' ->> 'amount') IS NOT NULL AND
-                (p.payload_json -> 'attributes' ->> 'createdAt') IS NOT NULL AND
-                (p.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id') IS NOT NULL AND
-                (p.payload_json -> 'relationships' -> 'paymentMethod' -> 'data' ->> 'id') IS NOT NULL AND
-                (p.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN IS NOT TRUE AND
-                frs.id_sucursal_fuente IS NOT NULL
+            WHERE p.payload_json ->> 'id' IS NOT NULL AND (p.payload_json -> 'attributes' ->> 'amount') IS NOT NULL AND (p.payload_json -> 'attributes' ->> 'createdAt') IS NOT NULL AND (p.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id') IS NOT NULL AND (p.payload_json -> 'relationships' -> 'paymentMethod' -> 'data' ->> 'id') IS NOT NULL AND (p.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN IS NOT TRUE AND frs.id_sucursal_fuente IS NOT NULL
             ORDER BY p.id_fudo, p.id_sucursal_fuente, p.fecha_extraccion_utc DESC;
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_pagos_id_sucursal ON public.mv_pagos (id, id_sucursal);
+            -- El índice único ahora es sobre la nueva columna 'payment_key'
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_pagos_payment_key ON public.mv_pagos (payment_key);
         """),
         ('mv_sales_order_line', """
             CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_sales_order_line AS
             SELECT DISTINCT ON (i.id_fudo, i.id_sucursal_fuente)
-                (i.payload_json ->> 'id')::INTEGER AS id_order_line,
+                (i.payload_json ->> 'id')::INTEGER AS id_order_line, -- ID de línea de Fudo
+                i.id_sucursal_fuente AS id_sucursal, -- Mantener id_sucursal
+                -- Crear una clave primaria compuesta para la Línea de Orden
+                (i.payload_json ->> 'id') || '-' || i.id_sucursal_fuente AS order_line_key, -- <--- NUEVA CLAVE ÚNICA DE LA LÍNEA DE ORDEN
                 (i.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id')::INTEGER AS id_order,
                 (i.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE AS date_order_time,
                 (i.payload_json -> 'attributes' ->> 'createdAt')::DATE AS date_order,
@@ -143,19 +143,14 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
                 (i.payload_json -> 'attributes' ->> 'price')::FLOAT AS price_unit,
                 ((i.payload_json -> 'attributes' ->> 'quantity')::FLOAT)::INTEGER AS qty,
                 ((i.payload_json -> 'attributes' ->> 'price')::FLOAT * (i.payload_json -> 'attributes' ->> 'quantity')::FLOAT)::FLOAT AS amount_total,
-                i.id_sucursal_fuente AS id_sucursal
+                -- Necesitamos el order_key de la venta para la FK
+                (frs.payload_json ->> 'id') || '-' || frs.id_sucursal_fuente AS order_key_fk -- <--- FK a Sales_order.order_key
             FROM public.fudo_raw_items i
-            WHERE
-                i.payload_json ->> 'id' IS NOT NULL AND
-                (i.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id') IS NOT NULL AND
-                (i.payload_json -> 'relationships' -> 'product' -> 'data' ->> 'id') IS NOT NULL AND
-                (i.payload_json -> 'attributes' ->> 'createdAt') IS NOT NULL AND
-                (i.payload_json -> 'attributes' ->> 'price') IS NOT NULL AND
-                (i.payload_json -> 'attributes' ->> 'quantity') IS NOT NULL AND
-                (i.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN IS NOT TRUE AND
-                ((i.payload_json -> 'attributes' ->> 'quantity')::FLOAT)::INTEGER > 0
+            JOIN public.fudo_raw_sales frs ON (i.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id')::INTEGER = (frs.payload_json ->> 'id')::INTEGER
+            WHERE i.payload_json ->> 'id' IS NOT NULL AND (i.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id') IS NOT NULL AND (i.payload_json -> 'relationships' -> 'product' -> 'data' ->> 'id') IS NOT NULL AND (i.payload_json -> 'attributes' ->> 'createdAt') IS NOT NULL AND (i.payload_json -> 'attributes' ->> 'price') IS NOT NULL AND (i.payload_json -> 'attributes' ->> 'quantity') IS NOT NULL AND (i.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN IS NOT TRUE AND ((i.payload_json -> 'attributes' ->> 'quantity')::FLOAT)::INTEGER > 0
             ORDER BY i.id_fudo, i.id_sucursal_fuente, i.fecha_extraccion_utc DESC;
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_sales_order_line_id_sucursal ON public.mv_sales_order_line (id_order_line, id_sucursal);
+            -- El índice único ahora es sobre la nueva columna 'order_line_key'
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_sales_order_line_order_line_key ON public.mv_sales_order_line (order_line_key);
         """)
     ]
 
