@@ -377,7 +377,7 @@ WHERE
     (s.payload_json -> 'attributes' ->> 'saleState') = 'CLOSED' AND
     s.id_sucursal_fuente IS NOT NULL -- <--- ¡ESTA ES LA CONDICIÓN CRÍTICA!
 ORDER BY s.id_fudo, s.id_sucursal_fuente, s.fecha_extraccion_utc DESC;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_sales_order_id ON public.mv_sales_order (id_order); -- <--- ¡NUEVO ÍNDICE ÚNICO!
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_sales_order_id_sucursal ON public.mv_sales_order (id_order, id_sucursal); -- <--- ¡NUEVO ÍNDICE ÚNICO!
 
 -- Pagos (DER)
 CREATE TABLE IF NOT EXISTS public.Pagos (
@@ -413,7 +413,7 @@ WHERE
     (p.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN IS NOT TRUE AND
     frs.id_sucursal_fuente IS NOT NULL -- Asegurar que la venta join tenga sucursal
 ORDER BY p.id_fudo, p.id_sucursal_fuente, p.fecha_extraccion_utc DESC;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_pagos_id ON public.mv_pagos (id); -- <--- ¡NUEVO ÍNDICE ÚNICO!
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_pagos_id_sucursal ON public.mv_pagos (id, id_sucursal);
 
 -- Sales_order_line (DER)
 CREATE TABLE IF NOT EXISTS public.Sales_order_line (
@@ -450,8 +450,7 @@ WHERE
     (i.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN IS NOT TRUE AND
     ((i.payload_json -> 'attributes' ->> 'quantity')::FLOAT)::INTEGER > 0
 ORDER BY i.id_fudo, i.id_sucursal_fuente, i.fecha_extraccion_utc DESC;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_sales_order_line_id ON public.mv_sales_order_line (id_order_line); -- <--- ¡NUEVO ÍNDICE ÚNICO!
-
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_sales_order_line_id_sucursal ON public.mv_sales_order_line (id_order_line, id_sucursal);
 -- ----------------------------------------------------------------------
 -- 4. VISTAS DESNORMALIZADAS DE LA CAPA RAW (PARA EXPLORACIÓN Y REPORTES FLEXIBLES)
 -- Estos son VISTAS estándar (no materializadas) que desestructuran el JSONB.
