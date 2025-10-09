@@ -298,6 +298,8 @@ SELECT
     sucursal_name AS sucursal
 FROM public.config_fudo_branches
 WHERE is_active = TRUE;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_sucursales_id ON public.mv_sucursales (id_sucursal); -- <--- ¡NUEVO ÍNDICE ÚNICO!
+
 
 -- Rubros (DER)
 CREATE TABLE IF NOT EXISTS public.Rubros (
@@ -310,10 +312,9 @@ SELECT DISTINCT ON (id_fudo)
     (payload_json ->> 'id')::INTEGER AS id_rubro,
     (payload_json -> 'attributes' ->> 'name')::VARCHAR(255) AS rubro_name
 FROM public.fudo_raw_product_categories
-WHERE
-    payload_json ->> 'id' IS NOT NULL AND
-    payload_json -> 'attributes' ->> 'name' IS NOT NULL
+WHERE payload_json ->> 'id' IS NOT NULL AND payload_json -> 'attributes' ->> 'name' IS NOT NULL
 ORDER BY id_fudo, fecha_extraccion_utc DESC;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_rubros_id ON public.mv_rubros (id_rubro); -- <--- ¡NUEVO ÍNDICE ÚNICO!
 
 -- Medio_pago (DER)
 CREATE TABLE IF NOT EXISTS public.Medio_pago (
@@ -330,6 +331,7 @@ WHERE
     payload_json ->> 'id' IS NOT NULL AND
     payload_json -> 'attributes' ->> 'name' IS NOT NULL
 ORDER BY id_fudo, fecha_extraccion_utc DESC;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_medio_pago_id ON public.mv_medio_pago (id_payment); -- <--- ¡NUEVO ÍNDICE ÚNICO!
 
 -- Productos (DER)
 CREATE TABLE IF NOT EXISTS public.Productos (
@@ -348,6 +350,7 @@ WHERE
     p.payload_json ->> 'id' IS NOT NULL AND
     p.payload_json -> 'attributes' ->> 'name' IS NOT NULL
 ORDER BY p.id_fudo, p.fecha_extraccion_utc DESC;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_productos_id ON public.mv_productos (id_product); -- <--- ¡NUEVO ÍNDICE ÚNICO!
 
 -- Sales_order (DER)
 CREATE TABLE IF NOT EXISTS public.Sales_order (
@@ -374,6 +377,7 @@ WHERE
     (s.payload_json -> 'attributes' ->> 'saleState') = 'CLOSED' AND
     s.id_sucursal_fuente IS NOT NULL -- <--- ¡ESTA ES LA CONDICIÓN CRÍTICA!
 ORDER BY s.id_fudo, s.id_sucursal_fuente, s.fecha_extraccion_utc DESC;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_sales_order_id ON public.mv_sales_order (id_order); -- <--- ¡NUEVO ÍNDICE ÚNICO!
 
 -- Pagos (DER)
 CREATE TABLE IF NOT EXISTS public.Pagos (
@@ -409,6 +413,7 @@ WHERE
     (p.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN IS NOT TRUE AND
     frs.id_sucursal_fuente IS NOT NULL -- Asegurar que la venta join tenga sucursal
 ORDER BY p.id_fudo, p.id_sucursal_fuente, p.fecha_extraccion_utc DESC;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_pagos_id ON public.mv_pagos (id); -- <--- ¡NUEVO ÍNDICE ÚNICO!
 
 -- Sales_order_line (DER)
 CREATE TABLE IF NOT EXISTS public.Sales_order_line (
@@ -445,6 +450,7 @@ WHERE
     (i.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN IS NOT TRUE AND
     ((i.payload_json -> 'attributes' ->> 'quantity')::FLOAT)::INTEGER > 0
 ORDER BY i.id_fudo, i.id_sucursal_fuente, i.fecha_extraccion_utc DESC;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_sales_order_line_id ON public.mv_sales_order_line (id_order_line); -- <--- ¡NUEVO ÍNDICE ÚNICO!
 
 -- ----------------------------------------------------------------------
 -- 4. VISTAS DESNORMALIZADAS DE LA CAPA RAW (PARA EXPLORACIÓN Y REPORTES FLEXIBLES)

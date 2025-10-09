@@ -6,6 +6,8 @@ import time
 from hashlib import md5
 import os
 
+import psycopg2
+
 # Tus módulos (importaciones directas/relativas a la raíz del WORKDIR /app en Docker)
 # Dentro del contenedor Docker, 'main.py' está en /app, y 'modules' está en /app/modules
 from modules.config import load_config
@@ -48,6 +50,7 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
                 sucursal_name AS sucursal
             FROM public.config_fudo_branches
             WHERE is_active = TRUE;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_sucursales_id ON public.mv_sucursales (id_sucursal);
         """),
         ('mv_rubros', """
             CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_rubros AS
@@ -59,6 +62,7 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
                 payload_json ->> 'id' IS NOT NULL AND
                 payload_json -> 'attributes' ->> 'name' IS NOT NULL
             ORDER BY id_fudo, fecha_extraccion_utc DESC;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_rubros_id ON public.mv_rubros (id_rubro);
         """),
         ('mv_medio_pago', """
             CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_medio_pago AS
@@ -70,6 +74,7 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
                 payload_json ->> 'id' IS NOT NULL AND
                 payload_json -> 'attributes' ->> 'name' IS NOT NULL
             ORDER BY id_fudo, fecha_extraccion_utc DESC;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_medio_pago_id ON public.mv_medio_pago (id_payment);
         """),
         ('mv_productos', """
             CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_productos AS
@@ -82,6 +87,8 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
                 p.payload_json ->> 'id' IS NOT NULL AND
                 p.payload_json -> 'attributes' ->> 'name' IS NOT NULL
             ORDER BY p.id_fudo, p.fecha_extraccion_utc DESC;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_medio_pago_id ON public.mv_medio_pago (id_payment);
+         
         """),
         ('mv_sales_order', """
             CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_sales_order AS
@@ -101,6 +108,7 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
                 (s.payload_json -> 'attributes' ->> 'saleState') = 'CLOSED' AND
                 s.id_sucursal_fuente IS NOT NULL
             ORDER BY s.id_fudo, s.id_sucursal_fuente, s.fecha_extraccion_utc DESC;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_sales_order_id_sucursal ON public.mv_sales_order (id_order, id_sucursal);
         """),
         ('mv_pagos', """
             CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_pagos AS
@@ -122,6 +130,7 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
                 (p.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN IS NOT TRUE AND
                 frs.id_sucursal_fuente IS NOT NULL
             ORDER BY p.id_fudo, p.id_sucursal_fuente, p.fecha_extraccion_utc DESC;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_pagos_id_sucursal ON public.mv_pagos (id, id_sucursal);
         """),
         ('mv_sales_order_line', """
             CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_sales_order_line AS
@@ -146,6 +155,7 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
                 (i.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN IS NOT TRUE AND
                 ((i.payload_json -> 'attributes' ->> 'quantity')::FLOAT)::INTEGER > 0
             ORDER BY i.id_fudo, i.id_sucursal_fuente, i.fecha_extraccion_utc DESC;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_sales_order_line_id_sucursal ON public.mv_sales_order_line (id_order_line, id_sucursal);
         """)
     ]
 
@@ -340,19 +350,29 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
             continue  # Continuar con las siguientes vistas aunque esta falle
 
     # Luego, las MVs del DER (ya existentes y se refrescan)
-    for mv_name, create_sql in materialized_views_configs:  # Usa materialized_views_configs aquí
+    for mv_name, create_sql in materialized_views_configs: # Usa materialized_views_configs aquí
         logger.info(f"  Procesando Vista Materializada: '{mv_name}'...")
         try:
-            # Intentar crear la MV si no existe (la definición está en materialized_views_configs)
+            # Intentar crear la MV si no existe
             logger.info(f"    Intentando crear MV '{mv_name}' si no existe...")
-            db_manager.execute_query(create_sql)  # Ejecuta el CREATE MV IF NOT EXISTS
+            db_manager.execute_query(create_sql) # Ejecuta el CREATE MV IF NOT EXISTS
             logger.info(f"    MV '{mv_name}' creada/existente.")
 
-            # Luego, refrescarla
-            logger.info(f"    Refrescando MV '{mv_name}'...")
-            db_manager.execute_query(f"REFRESH MATERIALIZED VIEW public.{mv_name};")
+            # --- CORRECCIÓN CRÍTICA AQUÍ: Usar REFRESH CONCURRENTLY ---
+            logger.info(f"    Refrescando MV '{mv_name}' CONCURRENTLY...")
+            db_manager.execute_query(f"REFRESH MATERIALIZED VIEW CONCURRENTLY public.{mv_name};")
             logger.info(f"    MV '{mv_name}' refrescada exitosamente.")
+            # --------------------------------------------------------
 
+        except psycopg2.errors.LockNotAvailable as e:
+            logger.warning(f"  Advertencia: No se pudo adquirir bloqueo para REFRESH CONCURRENTLY de '{mv_name}'. Intentando REFRESH normal. Error: {e}")
+            # Si CONCURRENTLY falla por bloqueo (raro), intentamos el normal
+            try:
+                db_manager.execute_query(f"REFRESH MATERIALIZED VIEW public.{mv_name};")
+                logger.info(f"    MV '{mv_name}' refrescada exitosamente (modo normal).")
+            except Exception as e_normal:
+                logger.error(f"  ERROR (normal) al refrescar la Vista Materializada '{mv_name}': {e_normal}", exc_info=True)
+                continue
         except Exception as e:
             logger.error(f"  ERROR al procesar la Vista Materializada '{mv_name}': {e}", exc_info=True)
             continue 
