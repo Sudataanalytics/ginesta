@@ -94,19 +94,25 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
             CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_sales_order AS
             SELECT DISTINCT ON (s.id_fudo, s.id_sucursal_fuente)
                 (s.payload_json ->> 'id')::INTEGER AS id_order,
-                s.id_sucursal_fuente AS id_sucursal, -- Mantener id_sucursal
-                -- Crear una clave primaria compuesta para la MV
-                (s.payload_json ->> 'id') || '-' || s.id_sucursal_fuente AS order_key, -- <--- NUEVA CLAVE ÚNICA DE LA ORDEN
+                s.id_sucursal_fuente AS id_sucursal,
+                (s.payload_json ->> 'id') || '-' || s.id_sucursal_fuente AS order_key,
                 0.0::FLOAT AS amount_tax,
                 (s.payload_json -> 'attributes' ->> 'total')::FLOAT AS amount_total,
                 COALESCE(
                     (s.payload_json -> 'attributes' ->> 'closedAt')::TIMESTAMP WITH TIME ZONE,
                     (s.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE
-                ) AS date_order
+                ) AS date_order,
+                (s.payload_json -> 'attributes' ->> 'saleType') AS sale_type, -- <--- AÑADIR A LA MV
+                (s.payload_json -> 'relationships' -> 'table' -> 'data' ->> 'id') AS table_id, -- <--- AÑADIR A LA MV
+                (s.payload_json -> 'relationships' -> 'waiter' -> 'data' ->> 'id') AS waiter_id -- <--- AÑADIR A LA MV
             FROM public.fudo_raw_sales s
-            WHERE s.payload_json ->> 'id' IS NOT NULL AND s.payload_json -> 'attributes' ->> 'total' IS NOT NULL AND (s.payload_json -> 'attributes' ->> 'saleState') = 'CLOSED' AND s.id_sucursal_fuente IS NOT NULL
+            WHERE
+                s.payload_json ->> 'id' IS NOT NULL AND
+                s.payload_json -> 'attributes' ->> 'total' IS NOT NULL AND
+                (s.payload_json -> 'attributes' ->> 'saleState') = 'CLOSED' AND
+                s.id_sucursal_fuente IS NOT NULL
             ORDER BY s.id_fudo, s.id_sucursal_fuente, s.fecha_extraccion_utc DESC;
-            -- El índice único ahora es sobre la nueva columna 'order_key'
+            -- El índice único ya está definido en order_key
             CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_sales_order_order_key ON public.mv_sales_order (order_key);
         """),
         ('mv_pagos', """
