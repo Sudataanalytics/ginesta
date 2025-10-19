@@ -306,6 +306,31 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
             FROM public.fudo_raw_ingredients i
             ORDER BY i.id_fudo, i.id_sucursal_fuente, i.fecha_extraccion_utc DESC;
         """),
+        #fudo_view_raw_items (¡ACTUALIZADA con campos completos!)
+        ('fudo_view_raw_items', """
+            drop view if exists public.fudo_view_raw_items CASCADE;
+            CREATE OR REPLACE VIEW public.fudo_view_raw_items AS
+            SELECT
+                i.id_fudo, i.id_sucursal_fuente, i.fecha_extraccion_utc, i.payload_checksum,
+                (i.payload_json ->> 'id') AS item_id,
+                (i.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN AS canceled,
+                (i.payload_json -> 'attributes' ->> 'cancellationComment') AS cancellation_comment,
+                (i.payload_json -> 'attributes' ->> 'comment') AS comment,
+                (i.payload_json -> 'attributes' ->> 'cost')::FLOAT AS cost,
+                (i.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE AS created_at,
+                (i.payload_json -> 'attributes' ->> 'price')::FLOAT AS price,
+                (i.payload_json -> 'attributes' ->> 'quantity')::FLOAT AS quantity,
+                (i.payload_json -> 'attributes' ->> 'status') AS status,
+                (i.payload_json -> 'attributes' ->> 'paid')::BOOLEAN AS paid,
+                (i.payload_json -> 'attributes' ->> 'lastStockCountAt')::TIMESTAMP WITH TIME ZONE AS last_stock_count_at,
+                (i.payload_json -> 'relationships' -> 'product' -> 'data' ->> 'id') AS product_id,
+                (i.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id') AS sale_id,
+                (i.payload_json -> 'relationships' -> 'priceList' -> 'data' ->> 'id') AS price_list_id,
+                (i.payload_json -> 'relationships' -> 'subitems' -> 'data') AS subitems_data,
+                i.payload_json AS original_payload
+            FROM public.fudo_raw_items i
+            ORDER BY i.id_fudo, i.id_sucursal_fuente, i.fecha_extraccion_utc DESC;
+        """),
         # fudo_view_raw_kitchens (¡ACTUALIZADA!)
         ('fudo_view_raw_kitchens', """
             DROP VIEW IF EXISTS public.fudo_view_raw_kitchens;
