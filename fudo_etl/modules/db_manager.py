@@ -105,57 +105,60 @@ class DBManager:
             raise
 
     def insert_raw_data(self, table_name: str, records: list[dict]):
-        """
-        Inserta datos crudos en la tabla especificada.
-        Utiliza `psycopg2.extras.execute_values` para inserciones en batch eficientes.
-        Asume que `records` es una lista de diccionarios,
-        y cada dict tiene las claves esperadas por la tabla fudo_raw_*.
-        La inserción es un UPSERT optimizado para evitar duplicados idénticos y solo
-        insertar nuevas versiones si el payload ha cambiado.
-        """
-        self._ensure_connection() # <--- ¡AÑADIR ESTO AQUÍ!
-        if not records:
-            logger.info(f"No hay registros para insertar en {table_name}.")
-            return
+            self._ensure_connection()
+            if not records:
+                logger.info(f"No hay registros para insertar en {table_name}.")
+                return
 
-        columns = [
-            'id_fudo',
-            'id_sucursal_fuente',
-            'fecha_extraccion_utc',
-            'payload_json',
-            'last_updated_at_fudo',
-            'payload_checksum'
-        ]
-        
-        values_to_insert = []
-        for record in records:
-            values_to_insert.append((
-                record.get('id_fudo'),
-                record.get('id_sucursal_fuente'),
-                record.get('fecha_extraccion_utc'),
-                record.get('payload_json'),
-                record.get('last_updated_at_fudo'),
-                record.get('payload_checksum')
-            ))
-        
-        cols_str = ', '.join(columns)
+            columns = [
+                'id_fudo', 'id_sucursal_fuente', 'fecha_extraccion_utc',
+                'payload_json', 'last_updated_at_fudo', 'payload_checksum'
+            ]
+            
+            values_to_insert = []
+            for record in records:
+                values_to_insert.append((
+                    record.get('id_fudo'), record.get('id_sucursal_fuente'), record.get('fecha_extraccion_utc'),
+                    record.get('payload_json'), record.get('last_updated_at_fudo'), record.get('payload_checksum')
+                ))
+            
+            cols_str = ', '.join(columns)
 
-        insert_query = f"""
-        INSERT INTO public.{table_name} ({cols_str})
-        VALUES %s
-        ON CONFLICT (id_fudo, id_sucursal_fuente, payload_checksum) DO NOTHING;
-        """
+            # --- Lógica de ON CONFLICT ESPECÍFICA PARA fudo_raw_sales ---
+            if table_name == 'fudo_raw_sales':
+                # Para sales, queremos actualizar si el checksum cambia, para obtener el último saleState
+                insert_query = f"""
+                INSERT INTO public.{table_name} ({cols_str})
+                VALUES %s
+                ON CONFLICT (id_fudo, id_sucursal_fuente) DO UPDATE SET -- <--- ¡NUEVA PK PARA ON CONFLICT!
+                    fecha_extraccion_utc = EXCLUDED.fecha_extraccion_utc,
+                    payload_json = EXCLUDED.payload_json,
+                    last_updated_at_fudo = EXCLUDED.last_updated_at_fudo,
+                    payload_checksum = EXCLUDED.payload_checksum
+                WHERE
+                    public.{table_name}.payload_checksum IS DISTINCT FROM EXCLUDED.payload_checksum; -- <--- ¡Solo si el contenido cambió!
+                """
+                # Esto significa: si id_fudo+id_sucursal ya existe,
+                # actualiza solo si el checksum del payload es diferente.
+                # Si el checksum es el mismo, DO NOTHING.
+            else:
+                # Para el resto de tablas RAW, la PK (id_fudo, id_sucursal_fuente, payload_checksum)
+                # ya maneja la inserción de nuevas versiones de contenido.
+                insert_query = f"""
+                INSERT INTO public.{table_name} ({cols_str})
+                VALUES %s
+                ON CONFLICT (id_fudo, id_sucursal_fuente, payload_checksum) DO NOTHING;
+                """
 
-        try:
-            with self.connection.cursor() as cursor:
-                extras.execute_values(cursor, insert_query, values_to_insert, page_size=1000)
-            self.connection.commit()
-            logger.info(f"Cargados {len(records)} registros en {table_name}.")
-        except Exception as e:
-            self.connection.rollback()
-            logger.error(f"Error al cargar datos crudos en {table_name}: {e}", exc_info=True)
-            raise
-
+            try:
+                with self.connection.cursor() as cursor:
+                    extras.execute_values(cursor, insert_query, values_to_insert, page_size=1000)
+                self.connection.commit()
+                logger.info(f"Cargados {len(records)} registros en {table_name}.")
+            except Exception as e:
+                self.connection.rollback()
+                logger.error(f"Error al cargar datos crudos en {table_name}: {e}", exc_info=True)
+                raise
     def execute_sql_script(self, sql_content: str):
         """
         Ejecuta un script SQL completo recibido como una cadena de texto.
