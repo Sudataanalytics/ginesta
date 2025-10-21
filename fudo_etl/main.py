@@ -98,25 +98,21 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
                 s.id_sucursal_fuente AS id_sucursal,
                 (s.payload_json ->> 'id') || '-' || s.id_sucursal_fuente AS order_key,
                 0.0::FLOAT AS amount_tax,
-                -- Volvemos a usar attributes.total, pero asegurando que NO sea NULL ni 0 (si tiene un total real)
                 (s.payload_json -> 'attributes' ->> 'total')::FLOAT AS amount_total,
-                COALESCE(
-                    (s.payload_json -> 'attributes' ->> 'closedAt')::TIMESTAMP WITH TIME ZONE,
-                    (s.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE
-                ) AS date_order,
+                (s.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE AS date_order, -- <--- AHORA date_order ES createdAt
                 (s.payload_json -> 'attributes' ->> 'saleType') AS sale_type,
                 (s.payload_json -> 'relationships' -> 'table' -> 'data' ->> 'id') AS table_id,
-                (s.payload_json -> 'relationships' -> 'waiter' -> 'data' ->> 'id') AS waiter_id
+                (s.payload_json -> 'relationships' -> 'waiter' -> 'data' ->> 'id') AS waiter_id,
+                (s.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE AS created_at,
+                (s.payload_json -> 'attributes' ->> 'closedAt')::TIMESTAMP WITH TIME ZONE AS closed_at
             FROM public.fudo_raw_sales s
             WHERE
                 s.payload_json ->> 'id' IS NOT NULL AND
-                -- CRÍTICO: Asegurar que attributes.total NO ES NULL Y NO ES 0, si es el campo de monto.
-                -- Si un JSON tiene items vacíos, su total puede ser 0, y eso NO es una venta que queremos sumar.
-                (s.payload_json -> 'attributes' ->> 'total')::FLOAT IS NOT NULL AND
-                (s.payload_json -> 'attributes' ->> 'total')::FLOAT > 0 AND -- <--- ¡Aseguramos que el total sea positivo!
-                -- CRÍTICO: Expandir los estados de venta válidos
-                (s.payload_json -> 'attributes' ->> 'saleState') IN ('CLOSED', 'IN-COURSE', 'DELIVERY-SENT', 'PAYMENT-PROCES', 'READY-TO-DELIVER') AND -- <--- ¡CAMBIO AQUÍ!
-                s.id_sucursal_fuente IS NOT NULL
+                s.id_sucursal_fuente IS NOT NULL AND
+                (s.payload_json -> 'attributes' ->> 'createdAt') IS NOT NULL AND
+                (s.payload_json -> 'attributes' ->> 'total') IS NOT NULL AND -- Aseguramos que 'total' no sea NULL antes de usarlo
+                (s.payload_json -> 'attributes' ->> 'saleState') IS NOT NULL AND
+                (s.payload_json -> 'attributes' ->> 'saleState') != 'CANCELED' -- <--- FILTRO CLAVE
             ORDER BY s.id_fudo, s.id_sucursal_fuente, s.fecha_extraccion_utc DESC;
             CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_sales_order_order_key ON public.mv_sales_order (order_key);
         """),
