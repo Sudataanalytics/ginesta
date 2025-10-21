@@ -352,13 +352,34 @@ ALTER TABLE public.Sales_order ADD COLUMN IF NOT EXISTS table_id TEXT;
 ALTER TABLE public.Sales_order ADD COLUMN IF NOT EXISTS waiter_id TEXT;
 
 -- mv_sales_order
-CREATE TABLE IF NOT EXISTS public.Sales_order (id_order INTEGER PRIMARY KEY, amount_tax FLOAT, amount_total FLOAT NOT NULL, date_order TIMESTAMP NOT NULL, id_sucursal VARCHAR(255) NOT NULL, sale_type VARCHAR(50), table_id TEXT, waiter_id TEXT);
-ALTER TABLE public.Sales_order ADD COLUMN IF NOT EXISTS sale_type VARCHAR(50); ALTER TABLE public.Sales_order ADD COLUMN IF NOT EXISTS table_id TEXT; ALTER TABLE public.Sales_order ADD COLUMN IF NOT EXISTS waiter_id TEXT;
 DROP MATERIALIZED VIEW IF EXISTS public.mv_sales_order CASCADE;
 CREATE MATERIALIZED VIEW public.mv_sales_order AS
-SELECT DISTINCT ON (s.id_fudo, s.id_sucursal_fuente) (s.payload_json ->> 'id')::INTEGER AS id_order, s.id_sucursal_fuente AS id_sucursal, (s.payload_json ->> 'id') || '-' || s.id_sucursal_fuente AS order_key, 0.0::FLOAT AS amount_tax, (s.payload_json -> 'attributes' ->> 'total')::FLOAT AS amount_total, COALESCE((s.payload_json -> 'attributes' ->> 'closedAt')::TIMESTAMP WITH TIME ZONE, (s.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE) AS date_order, (s.payload_json -> 'attributes' ->> 'saleType') AS sale_type, (s.payload_json -> 'relationships' -> 'table' -> 'data' ->> 'id') AS table_id, (s.payload_json -> 'relationships' -> 'waiter' -> 'data' ->> 'id') AS waiter_id FROM public.fudo_raw_sales s WHERE s.payload_json ->> 'id' IS NOT NULL AND s.payload_json -> 'attributes' ->> 'total' IS NOT NULL AND (s.payload_json -> 'attributes' ->> 'saleState') = 'CLOSED' AND s.id_sucursal_fuente IS NOT NULL ORDER BY s.id_fudo, s.id_sucursal_fuente, s.fecha_extraccion_utc DESC;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_sales_order_order_key ON public.mv_sales_order (order_key); -- Ya lo tenías, pero asegúrate.
-
+SELECT DISTINCT ON (s.id_fudo, s.id_sucursal_fuente)
+    (s.payload_json ->> 'id')::INTEGER AS id_order,
+    s.id_sucursal_fuente AS id_sucursal,
+    (s.payload_json ->> 'id') || '-' || s.id_sucursal_fuente AS order_key,
+    0.0::FLOAT AS amount_tax,
+    -- Volvemos a usar attributes.total, pero asegurando que NO sea NULL ni 0 (si tiene un total real)
+    (s.payload_json -> 'attributes' ->> 'total')::FLOAT AS amount_total,
+    COALESCE(
+        (s.payload_json -> 'attributes' ->> 'closedAt')::TIMESTAMP WITH TIME ZONE,
+        (s.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE
+    ) AS date_order,
+    (s.payload_json -> 'attributes' ->> 'saleType') AS sale_type,
+    (s.payload_json -> 'relationships' -> 'table' -> 'data' ->> 'id') AS table_id,
+    (s.payload_json -> 'relationships' -> 'waiter' -> 'data' ->> 'id') AS waiter_id
+FROM public.fudo_raw_sales s
+WHERE
+    s.payload_json ->> 'id' IS NOT NULL AND
+    -- CRÍTICO: Asegurar que attributes.total NO ES NULL Y NO ES 0, si es el campo de monto.
+    -- Si un JSON tiene items vacíos, su total puede ser 0, y eso NO es una venta que queremos sumar.
+    (s.payload_json -> 'attributes' ->> 'total')::FLOAT IS NOT NULL AND
+    (s.payload_json -> 'attributes' ->> 'total')::FLOAT > 0 AND -- <--- ¡Aseguramos que el total sea positivo!
+    -- CRÍTICO: Expandir los estados de venta válidos
+    (s.payload_json -> 'attributes' ->> 'saleState') IN ('CLOSED', 'IN-COURSE', 'DELIVERY-SENT', 'PAYMENT-PROCES', 'READY-TO-DELIVER') AND -- <--- ¡CAMBIO AQUÍ!
+    s.id_sucursal_fuente IS NOT NULL
+ORDER BY s.id_fudo, s.id_sucursal_fuente, s.fecha_extraccion_utc DESC;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_sales_order_order_key ON public.mv_sales_order (order_key);
 -- Pagos (DER)
 CREATE TABLE IF NOT EXISTS public.Pagos (
   id INTEGER PRIMARY KEY,
