@@ -159,7 +159,7 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
             CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_sales_order_line_order_line_key ON public.mv_sales_order_line (order_line_key);
         """),
           # --- AÑADIMOS EL NUEVO DER DE GASTOS ---
-        # mv_expense_categories (NUEVA MV - Dimensión)
+        # mv_expense_categories (NUEVA MV - CON ÍNDICE ÚNICO)
         ('mv_expense_categories', """
             DROP MATERIALIZED VIEW IF EXISTS public.mv_expense_categories CASCADE;
             CREATE MATERIALIZED VIEW public.mv_expense_categories AS
@@ -169,16 +169,17 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
                 (ec.payload_json -> 'attributes' ->> 'financialCategory') AS financial_category,
                 (ec.payload_json -> 'attributes' ->> 'active')::BOOLEAN AS active,
                 (ec.payload_json -> 'relationships' -> 'parentCategory' -> 'data' ->> 'id') AS parent_category_id,
-                ec.id_sucursal_fuente AS id_sucursal
+                ec.id_sucursal_fuente AS id_sucursal, -- Mantener id_sucursal
+                (ec.payload_json ->> 'id') || '-' || ec.id_sucursal_fuente AS expense_category_key
             FROM public.fudo_raw_expense_categories ec
             WHERE (ec.payload_json ->> 'id') IS NOT NULL AND (ec.payload_json -> 'attributes' ->> 'name') IS NOT NULL AND ec.id_sucursal_fuente IS NOT NULL
             ORDER BY ec.id_fudo, ec.id_sucursal_fuente, ec.fecha_extraccion_utc DESC;
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_expense_categories_id_sucursal ON public.mv_expense_categories (id_expense_category, id_sucursal); -- <--- ¡AÑADIR ESTO!
-        """), # <--- ¡COMA FALTANTE AQUÍ!
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_expense_categories_key ON public.mv_expense_categories (expense_category_key);
+        """),
 
-        # mv_expenses (NUEVA MV - Hecho)
+        # mv_expenses (NUEVA MV - CON ÍNDICE ÚNICO)
         ('mv_expenses', """
-            DROP MATERIALIZED VIEW IF EXISTS public.mv_expenses CASCADE;
+           DROP MATERIALIZED VIEW IF EXISTS public.mv_expenses CASCADE;
             CREATE MATERIALIZED VIEW public.mv_expenses AS
             SELECT DISTINCT ON (e.id_fudo, e.id_sucursal_fuente)
                 (e.payload_json ->> 'id') AS id_expense,
@@ -198,12 +199,13 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
                 (e.payload_json -> 'relationships' -> 'receiptType' -> 'data' ->> 'id') AS receipt_type_id,
                 (e.payload_json -> 'relationships' -> 'cashRegister' -> 'data' ->> 'id') AS cash_register_id,
                 (e.payload_json -> 'relationships' -> 'paymentMethod' -> 'data' ->> 'id') AS payment_method_id,
-                (e.payload_json -> 'relationships' -> 'expenseCategory' -> 'data' ->> 'id') AS expense_category_id
+                (e.payload_json -> 'relationships' -> 'expenseCategory' -> 'data' ->> 'id') AS expense_category_id,
+                (e.payload_json -> 'relationships' -> 'expenseCategory' -> 'data' ->> 'id') || '-' || e.id_sucursal_fuente AS expense_category_key
             FROM public.fudo_raw_expenses e
             WHERE (e.payload_json ->> 'id') IS NOT NULL AND e.id_sucursal_fuente IS NOT NULL
             ORDER BY e.id_fudo, e.id_sucursal_fuente, e.fecha_extraccion_utc DESC;
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_expenses_id_sucursal ON public.mv_expenses (id_expense, id_sucursal);
-        """),
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_expenses_id_sucursal ON public.mv_expenses (id_expense, id_sucursal); 
+        """)
     ]
 
     raw_views_configs = [

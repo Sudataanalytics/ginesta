@@ -422,20 +422,82 @@ WHERE i.payload_json ->> 'id' IS NOT NULL AND (i.payload_json -> 'relationships'
 ORDER BY i.id_fudo, i.id_sucursal_fuente, i.fecha_extraccion_utc DESC;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_sales_order_line_order_line_key ON public.mv_sales_order_line (order_line_key); -- <--- Usar el nombre correcto aquí
 
--- mv_expense_categories (NUEVA MV - CON ÍNDICE ÚNICO)
-CREATE TABLE IF NOT EXISTS public.Expense_categories (id_expense_category TEXT PRIMARY KEY, expense_category_name VARCHAR(255) NOT NULL, financial_category VARCHAR(255), active BOOLEAN, parent_category_id TEXT);
+-- mv_expense_categories (NUEVA MV - CON CLAVE SINTÉTICA Y ÍNDICE ÚNICO)
+CREATE TABLE IF NOT EXISTS public.Expense_categories (
+  id_expense_category TEXT, -- No PK si la clave sintética es la PK en Power BI
+  expense_category_name VARCHAR(255) NOT NULL,
+  financial_category VARCHAR(255),
+  active BOOLEAN,
+  parent_category_id TEXT,
+  id_sucursal VARCHAR(255) NOT NULL,
+  expense_category_key TEXT PRIMARY KEY -- <--- ¡AÑADIR ESTA COLUMNA COMO PK!
+);
 DROP MATERIALIZED VIEW IF EXISTS public.mv_expense_categories CASCADE;
 CREATE MATERIALIZED VIEW public.mv_expense_categories AS
-SELECT DISTINCT ON (ec.id_fudo, ec.id_sucursal_fuente) (ec.payload_json ->> 'id') AS id_expense_category, (ec.payload_json -> 'attributes' ->> 'name') AS expense_category_name, (ec.payload_json -> 'attributes' ->> 'financialCategory') AS financial_category, (ec.payload_json -> 'attributes' ->> 'active')::BOOLEAN AS active, (ec.payload_json -> 'relationships' -> 'parentCategory' -> 'data' ->> 'id') AS parent_category_id, ec.id_sucursal_fuente AS id_sucursal FROM public.fudo_raw_expense_categories ec WHERE (ec.payload_json ->> 'id') IS NOT NULL AND (ec.payload_json -> 'attributes' ->> 'name') IS NOT NULL AND ec.id_sucursal_fuente IS NOT NULL ORDER BY ec.id_fudo, ec.id_sucursal_fuente, ec.fecha_extraccion_utc DESC;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_expense_categories_id_sucursal ON public.mv_expense_categories (id_expense_category, id_sucursal); -- <--- ¡AÑADIR ESTO!
+SELECT DISTINCT ON (ec.id_fudo, ec.id_sucursal_fuente)
+    (ec.payload_json ->> 'id') AS id_expense_category,
+    (ec.payload_json -> 'attributes' ->> 'name') AS expense_category_name,
+    (ec.payload_json -> 'attributes' ->> 'financialCategory') AS financial_category,
+    (ec.payload_json -> 'attributes' ->> 'active')::BOOLEAN AS active,
+    (ec.payload_json -> 'relationships' -> 'parentCategory' -> 'data' ->> 'id') AS parent_category_id,
+    ec.id_sucursal_fuente AS id_sucursal, -- Mantener id_sucursal
+    (ec.payload_json ->> 'id') || '-' || ec.id_sucursal_fuente AS expense_category_key -- <--- ¡AÑADIR ESTO!
+FROM public.fudo_raw_expense_categories ec
+WHERE (ec.payload_json ->> 'id') IS NOT NULL AND (ec.payload_json -> 'attributes' ->> 'name') IS NOT NULL AND ec.id_sucursal_fuente IS NOT NULL
+ORDER BY ec.id_fudo, ec.id_sucursal_fuente, ec.fecha_extraccion_utc DESC;
+-- Crear el índice único sobre la clave sintética
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_expense_categories_key ON public.mv_expense_categories (expense_category_key);
 
--- mv_expenses (NUEVA MV - CON ÍNDICE ÚNICO)
-CREATE TABLE IF NOT EXISTS public.Expenses (id_expense TEXT PRIMARY KEY, id_sucursal VARCHAR(255) NOT NULL, amount FLOAT NOT NULL, description TEXT, expense_date TIMESTAMP NOT NULL, status VARCHAR(50), due_date TIMESTAMP, canceled BOOLEAN, created_at TIMESTAMP, payment_date TIMESTAMP, receipt_number TEXT, use_in_cash_count BOOLEAN, user_id TEXT, provider_id TEXT, receipt_type_id TEXT, cash_register_id TEXT, payment_method_id TEXT, expense_category_id TEXT);
+-- mv_expenses (NUEVA MV - CON CLAVE SINTÉTICA PARA FK)
+CREATE TABLE IF NOT EXISTS public.Expenses (
+  id_expense TEXT PRIMARY KEY,
+  id_sucursal VARCHAR(255) NOT NULL,
+  amount FLOAT NOT NULL,
+  description TEXT,
+  expense_date TIMESTAMP NOT NULL,
+  status VARCHAR(50),
+  due_date TIMESTAMP,
+  canceled BOOLEAN,
+  created_at TIMESTAMP,
+  payment_date TIMESTAMP,
+  receipt_number TEXT,
+  use_in_cash_count BOOLEAN,
+  user_id TEXT,
+  provider_id TEXT,
+  receipt_type_id TEXT,
+  cash_register_id TEXT,
+  payment_method_id TEXT,
+  expense_category_id TEXT, -- Mantener el id_expense_category de Fudo
+  expense_category_key TEXT NOT NULL -- <--- ¡AÑADIR LA FK A LA CLAVE SINTÉTICA!
+);
 DROP MATERIALIZED VIEW IF EXISTS public.mv_expenses CASCADE;
 CREATE MATERIALIZED VIEW public.mv_expenses AS
-SELECT DISTINCT ON (e.id_fudo, e.id_sucursal_fuente) (e.payload_json ->> 'id') AS id_expense, e.id_sucursal_fuente AS id_sucursal, (e.payload_json -> 'attributes' ->> 'amount')::FLOAT AS amount, (e.payload_json -> 'attributes' ->> 'description') AS description, (e.payload_json -> 'attributes' ->> 'date')::TIMESTAMP WITH TIME ZONE AS expense_date, (e.payload_json -> 'attributes' ->> 'status') AS status, (e.payload_json -> 'attributes' ->> 'dueDate')::TIMESTAMP WITH TIME ZONE AS due_date, (e.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN AS canceled, (e.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE AS created_at, (e.payload_json -> 'attributes' ->> 'paymentDate')::TIMESTAMP WITH TIME ZONE AS payment_date, (e.payload_json -> 'attributes' ->> 'receiptNumber') AS receipt_number, (e.payload_json -> 'attributes' ->> 'useInCashCount')::BOOLEAN AS use_in_cash_count, (e.payload_json -> 'relationships' -> 'user' -> 'data' ->> 'id') AS user_id, (e.payload_json -> 'relationships' -> 'provider' -> 'data' ->> 'id') AS provider_id, (e.payload_json -> 'relationships' -> 'receiptType' -> 'data' ->> 'id') AS receipt_type_id, (e.payload_json -> 'relationships' -> 'cashRegister' -> 'data' ->> 'id') AS cash_register_id, (e.payload_json -> 'relationships' -> 'paymentMethod' -> 'data' ->> 'id') AS payment_method_id, (e.payload_json -> 'relationships' -> 'expenseCategory' -> 'data' ->> 'id') AS expense_category_id FROM public.fudo_raw_expenses e WHERE (e.payload_json ->> 'id') IS NOT NULL AND e.id_sucursal_fuente IS NOT NULL ORDER BY e.id_fudo, e.id_sucursal_fuente, e.fecha_extraccion_utc DESC;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_expenses_id_sucursal ON public.mv_expenses (id_expense, id_sucursal); -- <--- ¡AÑADIR ESTO!
-
+SELECT DISTINCT ON (e.id_fudo, e.id_sucursal_fuente)
+    (e.payload_json ->> 'id') AS id_expense,
+    e.id_sucursal_fuente AS id_sucursal,
+    (e.payload_json -> 'attributes' ->> 'amount')::FLOAT AS amount,
+    (e.payload_json -> 'attributes' ->> 'description') AS description,
+    (e.payload_json -> 'attributes' ->> 'date')::TIMESTAMP WITH TIME ZONE AS expense_date,
+    (e.payload_json -> 'attributes' ->> 'status') AS status,
+    (e.payload_json -> 'attributes' ->> 'dueDate')::TIMESTAMP WITH TIME ZONE AS due_date,
+    (e.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN AS canceled,
+    (e.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE AS created_at,
+    (e.payload_json -> 'attributes' ->> 'paymentDate')::TIMESTAMP WITH TIME ZONE AS payment_date,
+    (e.payload_json -> 'attributes' ->> 'receiptNumber') AS receipt_number,
+    (e.payload_json -> 'attributes' ->> 'useInCashCount')::BOOLEAN AS use_in_cash_count,
+    (e.payload_json -> 'relationships' -> 'user' -> 'data' ->> 'id') AS user_id,
+    (e.payload_json -> 'relationships' -> 'provider' -> 'data' ->> 'id') AS provider_id,
+    (e.payload_json -> 'relationships' -> 'receiptType' -> 'data' ->> 'id') AS receipt_type_id,
+    (e.payload_json -> 'relationships' -> 'cashRegister' -> 'data' ->> 'id') AS cash_register_id,
+    (e.payload_json -> 'relationships' -> 'paymentMethod' -> 'data' ->> 'id') AS payment_method_id,
+    (e.payload_json -> 'relationships' -> 'expenseCategory' -> 'data' ->> 'id') AS expense_category_id,
+    -- --- AÑADIR LA FK A LA CLAVE SINTÉTICA ---
+    (e.payload_json -> 'relationships' -> 'expenseCategory' -> 'data' ->> 'id') || '-' || e.id_sucursal_fuente AS expense_category_key
+    -- ----------------------------------------
+FROM public.fudo_raw_expenses e
+WHERE (e.payload_json ->> 'id') IS NOT NULL AND e.id_sucursal_fuente IS NOT NULL
+ORDER BY e.id_fudo, e.id_sucursal_fuente, e.fecha_extraccion_utc DESC;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_expenses_id_sucursal ON public.mv_expenses (id_expense, id_sucursal); -- Mantener este índice también, si id_expense + id_sucursal es la PK natural.
 -- 4. VISTAS DESNORMALIZADAS DE LA CAPA RAW (PARA EXPLORACIÓN Y REPORTES FLEXIBLES)
 -- Estos son VISTAS estándar (no materializadas) que desestructuran el JSONB.
 -- Se utilizan para facilitar la exploración y acceso directo a los datos.
