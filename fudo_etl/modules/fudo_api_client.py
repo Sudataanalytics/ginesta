@@ -16,16 +16,19 @@ class FudoApiClient:
         self.inter_page_delay = 1.0
         
         # --- Mapeo EXPLÍCITO: SOLO PARA ENTIDADES QUE SOPORTAN 'fields' ---
+        # --- Solo endpoint 'expenses' ---
         self.fields_key_mapping = {
             'expenses': 'expense',
+            'expense-categories': 'expenseCategory', # <--- ¡AÑADE ESTA LÍNEA!
         }
-        
+
         self.fields_parameters = {
-            'expense': (
-                'amount,canceled,cashRegister,createdAt,date,description,dueDate,'
-                'expenseCategory,expenseItems,paymentDate,paymentMethod,provider,'
-                'receiptNumber,receiptType,status,useInCashCount,user'
-            ),
+            'expense': 'amount,canceled,cashRegister,createdAt,date,description,dueDate,expenseCategory,expenseItems,paymentDate,paymentMethod,provider,receiptNumber,receiptType,status,useInCashCount,user',
+            'expenseCategory': ('active,financialCategory,name,parentCategory'),
+        }
+
+        self.incremental_filter_entities = {
+            'sales': 'createdAt',
         }
 
         # --- ENTIDADES CON FILTRO INCREMENTAL POR 'createdAt' ---
