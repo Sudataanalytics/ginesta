@@ -255,7 +255,7 @@ CREATE TABLE IF NOT EXISTS public.fudo_raw_sales (
     payload_json JSONB NOT NULL, 
     last_updated_at_fudo TIMESTAMP WITH TIME ZONE,
     payload_checksum TEXT NOT NULL,
-    PRIMARY KEY (id_fudo, id_sucursal_fuente, payload_checksum)
+    PRIMARY KEY (id_fudo, id_sucursal_fuente)
 );
 CREATE INDEX IF NOT EXISTS idx_fudo_raw_sales_id_sucursal_fecha ON public.fudo_raw_sales (id_fudo, id_sucursal_fuente, fecha_extraccion_utc DESC);
 
