@@ -206,7 +206,28 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
             WHERE (e.payload_json ->> 'id') IS NOT NULL AND e.id_sucursal_fuente IS NOT NULL
             ORDER BY e.id_fudo, e.id_sucursal_fuente, e.fecha_extraccion_utc DESC;
             CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_expenses_id_sucursal ON public.mv_expenses (id_expense, id_sucursal); 
-        """)
+        """),
+        ('mv_product_categories_details', """
+            DROP MATERIALIZED VIEW IF EXISTS public.mv_product_categories_details CASCADE;
+            CREATE MATERIALIZED VIEW public.mv_product_categories_details AS
+            SELECT DISTINCT ON (pc.id_fudo, pc.id_sucursal_fuente)
+                (pc.payload_json ->> 'id')::INTEGER AS id_product_category,
+                (pc.payload_json -> 'attributes' ->> 'name')::VARCHAR(255) AS product_category_name,
+                (pc.payload_json -> 'attributes' ->> 'position')::INTEGER AS "position",
+                (pc.payload_json -> 'attributes' ->> 'preparationTime')::INTEGER AS preparation_time,
+                (pc.payload_json -> 'attributes' ->> 'enableOnlineMenu')::BOOLEAN AS enable_online_menu,
+                (pc.payload_json -> 'relationships' -> 'kitchen' -> 'data' ->> 'id') AS kitchen_id,
+                (pc.payload_json -> 'relationships' -> 'parentCategory' -> 'data' ->> 'id') AS parent_category_id,
+                pc.id_sucursal_fuente AS id_sucursal,
+                (pc.payload_json ->> 'id') || '-' || pc.id_sucursal_fuente AS product_category_key
+            FROM public.fudo_raw_product_categories pc
+            WHERE
+                (pc.payload_json ->> 'id') IS NOT NULL AND
+                (pc.payload_json -> 'attributes' ->> 'name') IS NOT NULL AND
+                pc.id_sucursal_fuente IS NOT NULL
+            ORDER BY pc.id_fudo, pc.id_sucursal_fuente, pc.fecha_extraccion_utc DESC;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_product_categories_key ON public.mv_product_categories_details (product_category_key);
+        """),
     ]
 
     raw_views_configs = [

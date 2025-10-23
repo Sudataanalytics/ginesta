@@ -515,6 +515,20 @@ FROM public.fudo_raw_expenses e
 WHERE (e.payload_json ->> 'id') IS NOT NULL AND e.id_sucursal_fuente IS NOT NULL
 ORDER BY e.id_fudo, e.id_sucursal_fuente, e.fecha_extraccion_utc DESC;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_expenses_id_sucursal ON public.mv_expenses (id_expense, id_sucursal); -- Mantener este índice también, si id_expense + id_sucursal es la PK natural.
+
+-- Product_categories (Tabla Lógica del DER - para categorización de productos)
+CREATE TABLE IF NOT EXISTS public.Product_categories (
+  id_product_category INTEGER,
+  product_category_name VARCHAR(255) NOT NULL,
+  "position" INTEGER,
+  preparation_time INTEGER,
+  enable_online_menu BOOLEAN,
+  kitchen_id TEXT,
+  parent_category_id TEXT,
+  id_sucursal VARCHAR(255) NOT NULL,
+  product_category_key TEXT PRIMARY KEY
+);
+
 -- 4. VISTAS DESNORMALIZADAS DE LA CAPA RAW (PARA EXPLORACIÓN Y REPORTES FLEXIBLES)
 -- Estos son VISTAS estándar (no materializadas) que desestructuran el JSONB.
 -- Se utilizan para facilitar la exploración y acceso directo a los datos.
