@@ -117,23 +117,41 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
             CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_sales_order_order_key ON public.mv_sales_order (order_key);
         """),
         ('mv_pagos', """
+            DROP MATERIALIZED VIEW IF EXISTS public.mv_pagos CASCADE;
             CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_pagos AS
             SELECT DISTINCT ON (p.id_fudo, p.id_sucursal_fuente)
-                (p.payload_json ->> 'id')::INTEGER AS id, -- ID del pago de Fudo
-                p.id_sucursal_fuente AS id_sucursal, -- Mantener id_sucursal
-                -- Crear una clave primaria compuesta para el Pago
-                (p.payload_json ->> 'id') || '-' || p.id_sucursal_fuente AS payment_key, -- <--- NUEVA CLAVE ÚNICA DEL PAGO
+                (p.payload_json ->> 'id')::INTEGER AS id,
+                p.id_sucursal_fuente AS id_sucursal,
+                (p.payload_json ->> 'id') || '-' || p.id_sucursal_fuente AS payment_key,
                 (p.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id')::INTEGER AS pos_order_id,
                 (p.payload_json -> 'relationships' -> 'paymentMethod' -> 'data' ->> 'id')::INTEGER AS id_payment,
-                (p.payload_json -> 'attributes' ->> 'amount')::FLOAT AS amount,
+                (p.payload_json -> 'attributes' ->> 'amount')::FLOAT AS amount, -- Monto siempre positivo (absoluto)
+                
+                -- NUEVO CAMPO 1: Tipo de Transacción ('SALE' o 'EXPENSE')
+                CASE
+                    WHEN (p.payload_json -> 'relationships' -> 'expense' -> 'data' ->> 'id') IS NOT NULL THEN 'EXPENSE'
+                    WHEN (p.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id') IS NOT NULL THEN 'SALE'
+                    ELSE 'OTHER' -- Por si acaso hay algún otro tipo en el futuro
+                END AS transaction_type,
+
+                -- NUEVO CAMPO 2: Monto con Signo (Positivo para ventas, Negativo para gastos)
+                CASE
+                    WHEN (p.payload_json -> 'relationships' -> 'expense' -> 'data' ->> 'id') IS NOT NULL THEN -((p.payload_json -> 'attributes' ->> 'amount')::FLOAT)
+                    ELSE (p.payload_json -> 'attributes' ->> 'amount')::FLOAT
+                END AS signed_amount,
+
                 (p.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE AS payment_date,
-                -- Necesitamos el order_key de la venta para la FK
-                (frs.payload_json ->> 'id') || '-' || frs.id_sucursal_fuente AS order_key_fk -- <--- FK a Sales_order.order_key
+                (p.payload_json -> 'relationships' -> 'expense' -> 'data' ->> 'id') AS expense_id,
+                (frs.payload_json ->> 'id') || '-' || frs.id_sucursal_fuente AS order_key_fk
             FROM public.fudo_raw_payments p
-            JOIN public.fudo_raw_sales frs ON (p.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id')::INTEGER = (frs.payload_json ->> 'id')::INTEGER
-            WHERE p.payload_json ->> 'id' IS NOT NULL AND (p.payload_json -> 'attributes' ->> 'amount') IS NOT NULL AND (p.payload_json -> 'attributes' ->> 'createdAt') IS NOT NULL AND (p.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id') IS NOT NULL AND (p.payload_json -> 'relationships' -> 'paymentMethod' -> 'data' ->> 'id') IS NOT NULL AND (p.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN IS NOT TRUE AND frs.id_sucursal_fuente IS NOT NULL
+            LEFT JOIN public.fudo_raw_sales frs ON (p.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id')::INTEGER = (frs.payload_json ->> 'id')::INTEGER
+                                                AND p.id_sucursal_fuente = frs.id_sucursal_fuente
+            WHERE p.payload_json ->> 'id' IS NOT NULL
+              AND (p.payload_json -> 'attributes' ->> 'amount') IS NOT NULL
+              AND (p.payload_json -> 'attributes' ->> 'createdAt') IS NOT NULL
+              AND (p.payload_json -> 'relationships' -> 'paymentMethod' -> 'data' ->> 'id') IS NOT NULL
+              AND (p.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN IS NOT TRUE
             ORDER BY p.id_fudo, p.id_sucursal_fuente, p.fecha_extraccion_utc DESC;
-            -- El índice único ahora es sobre la nueva columna 'payment_key'
             CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_pagos_payment_key ON public.mv_pagos (payment_key);
         """),
         ('mv_sales_order_line', """
