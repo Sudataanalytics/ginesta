@@ -1,4 +1,5 @@
 requests
 psycopg2-binary
 python-dotenv
-google-cloud-secret-manager # Comentado por ahora para desarrollo local
+google-cloud-secret-manager
+packaging                 
