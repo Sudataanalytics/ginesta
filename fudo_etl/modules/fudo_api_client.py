@@ -16,7 +16,6 @@ class FudoApiClient:
         self.inter_page_delay = 1.0
         
         # --- Mapeo EXPLÍCITO: SOLO PARA ENTIDADES QUE SOPORTAN 'fields' ---
-        # Mantener solo las entidades que REALMENTE lo necesitan.
         self.fields_key_mapping = {
             'expenses': 'expense',
             'expense-categories': 'expenseCategory',
@@ -27,15 +26,10 @@ class FudoApiClient:
             'expenseCategory': ('active,financialCategory,name,parentCategory'),
         }
 
-        # --- ENTIDADES CON FILTRO INCREMENTAL POR 'createdAt' (si la API lo soporta bien) ---
+        # --- ENTIDADES CON FILTRO INCREMENTAL POR 'createdAt' ---
         self.incremental_filter_entities = {
             'sales': 'createdAt',
         }
-        
-        # --- CONFIGURACIÓN: Ventana de páginas recientes a re-procesar para 'sales' ---
-        # Esto es para asegurar que capturamos cambios de estado en ventas recientes.
-        self.sales_recent_pages_to_reprocess = 20 # Número de páginas más recientes a siempre traer (sin filtro de fecha)
-
 
     def set_auth_token(self, token: str):
         self.auth_token = token
@@ -43,8 +37,8 @@ class FudoApiClient:
 
     def get_data(self, entity_name: str, id_sucursal: str, last_extracted_ts: datetime = None) -> list[dict]:
         """
-        Extrae datos paginados de la API de Fudo. Para 'sales', combina full load inicial,
-        ventana deslizante para estados recientes e incremental para ventas nuevas.
+        Extrae datos paginados de la API de Fudo.
+        En esta versión, 'sales' siempre hace full load completo.
         """
         if not self.auth_token:
             raise ValueError("Token de autenticación no establecido. Llama a set_auth_token primero.")
@@ -56,97 +50,52 @@ class FudoApiClient:
             "Accept": "application/json"
         }
 
-        # --- Lógica específica para 'sales' ---
+        # --- FULL LOAD permanente para 'sales' ---
         if entity_name == 'sales':
-            if last_extracted_ts is None:
-                logger.info(f"\n--- PRIMERA EJECUCIÓN: Extracción de '{entity_name}' para sucursal '{id_sucursal}' con CARGA HISTÓRICA COMPLETA. ---")
-                # Realizar una extracción completa, sin límite de páginas ni filtro incremental
-                all_sales = self._get_paginated_data_generic(
-                    request_url=request_url,
-                    headers=headers,
-                    page_size=page_size,
-                    entity_name=entity_name,
-                    id_sucursal=id_sucursal,
-                    apply_incremental_filter=False, # NO aplicar filtro de fecha
-                    start_page=1,
-                    max_pages=-1 # Sin límite de páginas = traer todo
-                )
-                logger.info(f"  Total de ventas únicas extraídas (carga completa): {len(all_sales)}")
-                return all_sales
-            else:
-                logger.info(f"\n--- EJECUCIÓN REGULAR: Extracción de '{entity_name}' para sucursal '{id_sucursal}' con estrategia combinada (Ventana Reciente + Incremental). ---")
-                
-                # --- 1. Extracción de Ventana Deslizante (páginas más recientes, SIN filtro incremental) ---
-                # Esto captura cambios de estado en ventas recientes que ya existían.
-                logger.info(f"    Trayendo las últimas {self.sales_recent_pages_to_reprocess} páginas de ventas recientes (sin filtro incremental).")
-                recent_sales = self._get_paginated_data_generic(
-                    request_url=request_url,
-                    headers=headers,
-                    page_size=page_size,
-                    entity_name=entity_name,
-                    id_sucursal=id_sucursal,
-                    apply_incremental_filter=False, # NO aplicar filtro de fecha aquí
-                    start_page=1, # Siempre desde la página 1 para las recientes
-                    max_pages=self.sales_recent_pages_to_reprocess # Limita el número de páginas
-                )
-                
-                # --- 2. Extracción Incremental (nuevas ventas desde last_extracted_ts) ---
-                # Esto captura ventas que son completamente nuevas.
-                incremental_sales = []
-                logger.info(f"    Trayendo ventas incrementales desde {last_extracted_ts} (filtrado por 'createdAt').")
-                incremental_sales = self._get_paginated_data_generic(
-                    request_url=request_url,
-                    headers=headers,
-                    page_size=page_size,
-                    entity_name=entity_name,
-                    id_sucursal=id_sucursal,
-                    apply_incremental_filter=True, # SÍ aplicar filtro de fecha aquí
-                    incremental_filter_ts=last_extracted_ts,
-                    start_page=1, # Se aplica el filtro, así que puede empezar desde la página 1
-                    max_pages=-1 # No hay límite de páginas para el incremental
-                )
-                
-                # Combinar y eliminar duplicados (una venta puede aparecer en ambas listas si está en las páginas recientes Y es nueva)
-                # Usamos un diccionario para mantener el último estado si hay duplicados por ID
-                combined_items_dict = {item['id']: item for item in recent_sales}
-                for item in incremental_sales:
-                    combined_items_dict[item['id']] = item # Sobrescribirá si ya existe de 'recent_sales' con un ID, garantizando el más reciente
-                
-                logger.info(f"  Total de ventas únicas extraídas para '{entity_name}' ({id_sucursal}): {len(combined_items_dict)}")
-                return list(combined_items_dict.values())
-            
-        else:
-            # --- Lógica genérica para otras entidades (solo incremental o full load) ---
-            logger.info(f"  Iniciando extracción de '{entity_name}' para sucursal '{id_sucursal}' con estrategia incremental/full.")
-            return self._get_paginated_data_generic(
+            logger.info(f"\n--- EJECUCIÓN DE FULL LOAD: Extracción completa de '{entity_name}' para sucursal '{id_sucursal}'. ---")
+            all_sales = self._get_paginated_data_generic(
                 request_url=request_url,
                 headers=headers,
                 page_size=page_size,
                 entity_name=entity_name,
                 id_sucursal=id_sucursal,
-                apply_incremental_filter=bool(last_extracted_ts),
-                incremental_filter_ts=last_extracted_ts,
-                fields_key=self.fields_key_mapping.get(entity_name),
-                fields_params=self.fields_parameters.get(self.fields_key_mapping.get(entity_name)),
+                apply_incremental_filter=False,  # Ignora el filtro incremental
                 start_page=1,
-                max_pages=-1
+                max_pages=-1  # Sin límite: trae todo
             )
+            logger.info(f"  Total de ventas únicas extraídas (carga completa): {len(all_sales)}")
+            return all_sales
 
-    # --- MÉTODO AUXILIAR que encapsula la lógica de paginación y reintentos ---
+        # --- Lógica genérica para otras entidades ---
+        logger.info(f"  Iniciando extracción de '{entity_name}' para sucursal '{id_sucursal}' con estrategia incremental/full.")
+        return self._get_paginated_data_generic(
+            request_url=request_url,
+            headers=headers,
+            page_size=page_size,
+            entity_name=entity_name,
+            id_sucursal=id_sucursal,
+            apply_incremental_filter=bool(last_extracted_ts),
+            incremental_filter_ts=last_extracted_ts,
+            fields_key=self.fields_key_mapping.get(entity_name),
+            fields_params=self.fields_parameters.get(self.fields_key_mapping.get(entity_name)),
+            start_page=1,
+            max_pages=-1
+        )
+
+    # --- MÉTODO AUXILIAR genérico con paginación y reintentos ---
     def _get_paginated_data_generic(self, request_url: str, headers: dict, page_size: int,
                                     entity_name: str, id_sucursal: str,
                                     apply_incremental_filter: bool, incremental_filter_ts: datetime = None,
                                     fields_key: str = None, fields_params: str = None,
                                     start_page: int = 1, max_pages: int = -1) -> list[dict]:
         """
-        Método auxiliar para extraer datos paginados de la API de Fudo con control de reintentos y backoff exponencial.
-        Más genérico y reutilizable.
+        Extrae datos paginados de la API de Fudo con control de reintentos y backoff exponencial.
         """
         all_items = []
         current_page = start_page
         
         params = {}
-        # Aplicar filtro incremental si se solicita
+        # Filtro incremental si corresponde
         if apply_incremental_filter and incremental_filter_ts and self.incremental_filter_entities.get(entity_name):
             filter_field = self.incremental_filter_entities.get(entity_name)
             formatted_ts = incremental_filter_ts.astimezone(timezone.utc).isoformat(timespec='seconds')
@@ -155,13 +104,12 @@ class FudoApiClient:
             params[f'filter[{filter_field}]'] = f"gte.{formatted_ts}"
             logger.debug(f"  Aplicando filtro incremental '{filter_field} >= {formatted_ts}' para {entity_name}.")
         
-        # Aplicar parámetros 'fields' si se solicitan
+        # Campos 'fields'
         if fields_key and fields_params:
             params[f'fields[{fields_key}]'] = fields_params
             logger.debug(f"  Aplicando parámetro 'fields[{fields_key}]' para '{entity_name}'.")
 
         while True:
-            # Control de límite de páginas
             if max_pages != -1 and current_page > (start_page - 1) + max_pages:
                 logger.debug(f"  Alcanzado el límite de {max_pages} páginas para '{entity_name}'.")
                 break
@@ -184,7 +132,6 @@ class FudoApiClient:
 
                     all_items.extend(data)
 
-                    # Condición de salida: si la página devuelve menos elementos que el tamaño solicitado
                     if not data or len(data) < page_size:
                         logger.debug(f"  Última página o página incompleta. Extracción de '{entity_name}' finalizada.")
                         return all_items
@@ -220,4 +167,4 @@ class FudoApiClient:
                 logger.error(f"Máximo de reintentos ({self.max_retries}) alcanzado para '{entity_name}' ({id_sucursal}) en la pág {current_page}.")
                 raise ConnectionError(f"Fallo al extraer '{entity_name}' tras {self.max_retries} reintentos.")
         
-        return all_items # Asegurarse de devolver los ítems si el bucle termina por max_pages
+        return all_items
