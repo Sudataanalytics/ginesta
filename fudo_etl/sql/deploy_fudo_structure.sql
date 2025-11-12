@@ -618,6 +618,32 @@ WHERE (pc.payload_json ->> 'id') IS NOT NULL
   AND pc.id_sucursal_fuente IS NOT NULL
 ORDER BY pc.id_fudo, pc.id_sucursal_fuente, pc.fecha_extraccion_utc DESC;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_product_categories_key ON public.mv_product_categories_details (product_category_key);
+-- Product_prices_by_branch (Precio y Stock de Producto por Sucursal)
+CREATE TABLE IF NOT EXISTS public.Product_prices_by_branch (
+  id_product_fudo TEXT NOT NULL,         -- ID original de Fudo (FK a mv_productos)
+  id_sucursal VARCHAR(255) NOT NULL,     -- ID de Sucursal (FK a mv_sucursales)
+  product_name VARCHAR(255) NOT NULL,    -- Nombre del producto en esta sucursal (para referencia)
+  price FLOAT,                           -- Precio base del producto en esa sucursal
+  stock FLOAT,                           -- Stock del producto en esa sucursal
+  is_active_in_branch BOOLEAN,           -- Si el producto está activo en esa sucursal
+  product_branch_key TEXT PRIMARY KEY    -- Clave sintética para esta granularidad
+);
+
+--mv_product_prices_by_branch
+            DROP MATERIALIZED VIEW IF EXISTS public.mv_product_prices_by_branch CASCADE;
+            CREATE MATERIALIZED VIEW public.mv_product_prices_by_branch AS
+            SELECT DISTINCT ON (p.id_fudo, p.id_sucursal_fuente)
+                (p.payload_json ->> 'id')::TEXT AS id_product_fudo,     -- ID original de Fudo (FK a mv_productos)
+                p.id_sucursal_fuente AS id_sucursal,                 -- ID de Sucursal (FK a mv_sucursales)
+                (p.payload_json -> 'attributes' ->> 'name')::VARCHAR(255) AS product_name, -- Nombre del producto en esta sucursal (para referencia)
+                (p.payload_json -> 'attributes' ->> 'price')::FLOAT AS price,       -- Precio base del producto en esa sucursal
+                (p.payload_json -> 'attributes' ->> 'stock')::FLOAT AS stock,       -- Stock del producto en esa sucursal
+                (p.payload_json -> 'attributes' ->> 'active')::BOOLEAN AS is_active_in_branch, -- Si el producto está activo en esa sucursal
+                (p.payload_json ->> 'id') || '-' || p.id_sucursal_fuente AS product_branch_key -- Clave sintética
+            FROM public.fudo_raw_products p
+            WHERE p.payload_json ->> 'id' IS NOT NULL AND p.id_sucursal_fuente IS NOT NULL
+            ORDER BY p.id_fudo, p.id_sucursal_fuente, p.fecha_extraccion_utc DESC;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_product_prices_branch_pk ON public.mv_product_prices_by_branch (product_branch_key);
 
 -- 4. VISTAS DESNORMALIZADAS DE LA CAPA RAW (PARA EXPLORACIÓN Y REPORTES FLEXIBLES)
 -- Estos son VISTAS estándar (no materializadas) que desestructuran el JSONB.

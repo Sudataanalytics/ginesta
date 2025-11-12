@@ -285,6 +285,28 @@ WHERE (pc.payload_json ->> 'id') IS NOT NULL
 ORDER BY pc.id_fudo, pc.id_sucursal_fuente, pc.fecha_extraccion_utc DESC;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_product_categories_key ON public.mv_product_categories_details (product_category_key);
         """),
+        ('mv_productos', """
+            -- ... (definición de mv_productos - SIN CAMBIOS) ...
+            -- Asegúrate de que id_product_fudo esté en el SELECT de mv_productos
+            -- como (p.payload_json ->> 'id')::FLOAT::INTEGER AS id_product_fudo
+        """),
+        # --- NUEVA VISTA MATERIALIZADA: PRECIOS Y STOCK DE PRODUCTOS POR SUCURSAL ---
+        ('mv_product_prices_by_branch', """
+            DROP MATERIALIZED VIEW IF EXISTS public.mv_product_prices_by_branch CASCADE;
+            CREATE MATERIALIZED VIEW public.mv_product_prices_by_branch AS
+            SELECT DISTINCT ON (p.id_fudo, p.id_sucursal_fuente)
+                (p.payload_json ->> 'id')::TEXT AS id_product_fudo,     -- ID original de Fudo (FK a mv_productos)
+                p.id_sucursal_fuente AS id_sucursal,                 -- ID de Sucursal (FK a mv_sucursales)
+                (p.payload_json -> 'attributes' ->> 'name')::VARCHAR(255) AS product_name, -- Nombre del producto en esta sucursal (para referencia)
+                (p.payload_json -> 'attributes' ->> 'price')::FLOAT AS price,       -- Precio base del producto en esa sucursal
+                (p.payload_json -> 'attributes' ->> 'stock')::FLOAT AS stock,       -- Stock del producto en esa sucursal
+                (p.payload_json -> 'attributes' ->> 'active')::BOOLEAN AS is_active_in_branch, -- Si el producto está activo en esa sucursal
+                (p.payload_json ->> 'id') || '-' || p.id_sucursal_fuente AS product_branch_key -- Clave sintética
+            FROM public.fudo_raw_products p
+            WHERE p.payload_json ->> 'id' IS NOT NULL AND p.id_sucursal_fuente IS NOT NULL
+            ORDER BY p.id_fudo, p.id_sucursal_fuente, p.fecha_extraccion_utc DESC;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_product_prices_branch_pk ON public.mv_product_prices_by_branch (product_branch_key);
+        """),
     ]
 
     raw_views_configs = [
