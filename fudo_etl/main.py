@@ -53,147 +53,186 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
             CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_sucursales_id ON public.mv_sucursales (id_sucursal);
         """),
         ('mv_rubros', """
-            CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_rubros AS
-            SELECT DISTINCT ON (id_fudo)
-                (payload_json ->> 'id')::INTEGER AS id_rubro,
+            DROP MATERIALIZED VIEW IF EXISTS public.mv_rubros CASCADE;
+            CREATE MATERIALIZED VIEW public.mv_rubros AS
+            SELECT DISTINCT ON (id_fudo, id_sucursal_fuente)
+                (payload_json ->> 'id')::FLOAT::INTEGER AS id_rubro_fudo, -- <--- ¡CORRECCIÓN AQUÍ!
+                id_sucursal_fuente AS id_sucursal,
+                (payload_json ->> 'id') || '-' || id_sucursal_fuente AS rubro_key,
                 (payload_json -> 'attributes' ->> 'name')::VARCHAR(255) AS rubro_name
             FROM public.fudo_raw_product_categories
-            WHERE
-                payload_json ->> 'id' IS NOT NULL AND
-                payload_json -> 'attributes' ->> 'name' IS NOT NULL
-            ORDER BY id_fudo, fecha_extraccion_utc DESC;
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_rubros_id ON public.mv_rubros (id_rubro);
+            WHERE payload_json ->> 'id' IS NOT NULL AND payload_json -> 'attributes' ->> 'name' IS NOT NULL
+            ORDER BY id_fudo, id_sucursal_fuente, fecha_extraccion_utc DESC;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_rubros_rubro_key ON public.mv_rubros (rubro_key);
         """),
         ('mv_medio_pago', """
-            CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_medio_pago AS
-            SELECT DISTINCT ON (id_fudo)
-                (payload_json ->> 'id')::INTEGER AS id_payment,
+            DROP MATERIALIZED VIEW IF EXISTS public.mv_medio_pago CASCADE;
+            CREATE MATERIALIZED VIEW public.mv_medio_pago AS
+            SELECT DISTINCT ON (id_fudo, id_sucursal_fuente)
+                (payload_json ->> 'id')::FLOAT::INTEGER AS id_payment_fudo, -- <--- ¡CORRECCIÓN AQUÍ!
+                id_sucursal_fuente AS id_sucursal,
+                (payload_json ->> 'id') || '-' || id_sucursal_fuente AS payment_method_key,
                 (payload_json -> 'attributes' ->> 'name')::VARCHAR(255) AS payment_method
             FROM public.fudo_raw_payment_methods
-            WHERE
-                payload_json ->> 'id' IS NOT NULL AND
-                payload_json -> 'attributes' ->> 'name' IS NOT NULL
-            ORDER BY id_fudo, fecha_extraccion_utc DESC;
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_medio_pago_id ON public.mv_medio_pago (id_payment);
+            WHERE payload_json ->> 'id' IS NOT NULL AND payload_json -> 'attributes' ->> 'name' IS NOT NULL
+            ORDER BY id_fudo, id_sucursal_fuente, fecha_extraccion_utc DESC;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_medio_pago_payment_method_key ON public.mv_medio_pago (payment_method_key);
         """),
         ('mv_productos', """
-            CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_productos AS
-            SELECT DISTINCT ON (p.id_fudo)
-                (p.payload_json ->> 'id')::INTEGER AS id_product,
+            DROP MATERIALIZED VIEW IF EXISTS public.mv_productos CASCADE;
+            CREATE MATERIALIZED VIEW public.mv_productos AS
+            SELECT DISTINCT ON (p.id_fudo, p.id_sucursal_fuente)
+                (p.payload_json ->> 'id')::FLOAT::INTEGER AS id_product_fudo, -- <--- ¡CORRECCIÓN AQUÍ!
+                p.id_sucursal_fuente AS id_sucursal,
+                (p.payload_json ->> 'id') || '-' || p.id_sucursal_fuente AS product_key,
                 (p.payload_json -> 'attributes' ->> 'name')::VARCHAR(255) AS product_name,
-                (p.payload_json -> 'relationships' -> 'productCategory' -> 'data' ->> 'id')::INTEGER AS id_rubro
+                (p.payload_json -> 'relationships' -> 'productCategory' -> 'data' ->> 'id')::FLOAT::INTEGER AS id_rubro_fudo, -- <--- ¡CORRECCIÓN AQUÍ!
+                (
+                    (p.payload_json -> 'relationships' -> 'productCategory' -> 'data' ->> 'id') || '-' || p.id_sucursal_fuente
+                ) AS rubro_key_fk
             FROM public.fudo_raw_products p
-            WHERE
-                p.payload_json ->> 'id' IS NOT NULL AND
-                p.payload_json -> 'attributes' ->> 'name' IS NOT NULL
-            ORDER BY p.id_fudo, p.fecha_extraccion_utc DESC;
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_medio_pago_id ON public.mv_medio_pago (id_payment);
-         
+            WHERE p.payload_json ->> 'id' IS NOT NULL AND p.payload_json -> 'attributes' ->> 'name' IS NOT NULL
+            ORDER BY p.id_fudo, p.id_sucursal_fuente, p.fecha_extraccion_utc DESC;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_productos_product_key ON public.mv_productos (product_key);
         """),
         ('mv_sales_order', """
-            DROP MATERIALIZED VIEW IF EXISTS public.mv_sales_order CASCADE;
-            CREATE MATERIALIZED VIEW public.mv_sales_order AS
-            SELECT DISTINCT ON (s.id_fudo, s.id_sucursal_fuente)
-                (s.payload_json ->> 'id')::INTEGER AS id_order,
-                s.id_sucursal_fuente AS id_sucursal,
-                (s.payload_json ->> 'id') || '-' || s.id_sucursal_fuente AS order_key,
-                0.0::FLOAT AS amount_tax,
-                (s.payload_json -> 'attributes' ->> 'total')::FLOAT AS amount_total,
-                (s.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE AS date_order, -- <--- AHORA date_order ES createdAt
-                (s.payload_json -> 'attributes' ->> 'saleType') AS sale_type,
-                (s.payload_json -> 'relationships' -> 'table' -> 'data' ->> 'id') AS table_id,
-                (s.payload_json -> 'relationships' -> 'waiter' -> 'data' ->> 'id') AS waiter_id,
-                (s.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE AS created_at,
-                (s.payload_json -> 'attributes' ->> 'closedAt')::TIMESTAMP WITH TIME ZONE AS closed_at
-            FROM public.fudo_raw_sales s
-            WHERE
-                s.payload_json ->> 'id' IS NOT NULL AND
-                s.id_sucursal_fuente IS NOT NULL AND
-                (s.payload_json -> 'attributes' ->> 'createdAt') IS NOT NULL AND
-                (s.payload_json -> 'attributes' ->> 'total') IS NOT NULL AND -- Aseguramos que 'total' no sea NULL antes de usarlo
-                (s.payload_json -> 'attributes' ->> 'saleState') IS NOT NULL AND
-                (s.payload_json -> 'attributes' ->> 'saleState') != 'CANCELED' -- <--- FILTRO CLAVE
-            ORDER BY s.id_fudo, s.id_sucursal_fuente, s.fecha_extraccion_utc DESC;
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_sales_order_order_key ON public.mv_sales_order (order_key);
+    DROP MATERIALIZED VIEW IF EXISTS public.mv_sales_order CASCADE;
+    CREATE MATERIALIZED VIEW public.mv_sales_order AS
+    SELECT DISTINCT ON (s.id_fudo, s.id_sucursal_fuente)
+        (s.payload_json ->> 'id')::FLOAT::INTEGER AS id_order, -- <--- ¡CORRECCIÓN AQUÍ!
+        s.id_sucursal_fuente AS id_sucursal,
+        (s.payload_json ->> 'id') || '-' || s.id_sucursal_fuente AS order_key,
+        0.0::FLOAT AS amount_tax,
+        (s.payload_json -> 'attributes' ->> 'total')::FLOAT AS amount_total,
+        (s.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE AS date_order,
+        (s.payload_json -> 'attributes' ->> 'saleType') AS sale_type,
+        (s.payload_json -> 'relationships' -> 'table' -> 'data' ->> 'id') AS table_id,
+        (s.payload_json -> 'relationships' -> 'waiter' -> 'data' ->> 'id') AS waiter_id,
+        (s.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE AS created_at,
+        (s.payload_json -> 'attributes' ->> 'closedAt')::TIMESTAMP WITH TIME ZONE AS closed_at
+    FROM public.fudo_raw_sales s
+    WHERE
+        s.payload_json ->> 'id' IS NOT NULL AND
+        s.id_sucursal_fuente IS NOT NULL AND
+        (s.payload_json -> 'attributes' ->> 'createdAt') IS NOT NULL AND
+        (s.payload_json -> 'attributes' ->> 'total') IS NOT NULL AND
+        (s.payload_json -> 'attributes' ->> 'saleState') IS NOT NULL AND
+        (s.payload_json -> 'attributes' ->> 'saleState') != 'CANCELED'
+    ORDER BY s.id_fudo, s.id_sucursal_fuente, s.fecha_extraccion_utc DESC;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_sales_order_order_key ON public.mv_sales_order (order_key);       
         """),
         ('mv_pagos', """
-            DROP MATERIALIZED VIEW IF EXISTS public.mv_pagos CASCADE;
-            CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_pagos AS
-            SELECT DISTINCT ON (p.id_fudo, p.id_sucursal_fuente)
-                (p.payload_json ->> 'id')::INTEGER AS id,
-                p.id_sucursal_fuente AS id_sucursal,
-                (p.payload_json ->> 'id') || '-' || p.id_sucursal_fuente AS payment_key,
-                (p.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id')::INTEGER AS pos_order_id,
-                (p.payload_json -> 'relationships' -> 'paymentMethod' -> 'data' ->> 'id')::INTEGER AS id_payment,
-                (p.payload_json -> 'attributes' ->> 'amount')::FLOAT AS amount, -- Monto siempre positivo (absoluto)
-                
-                -- NUEVO CAMPO 1: Tipo de Transacción ('SALE' o 'EXPENSE')
-                CASE
-                    WHEN (p.payload_json -> 'relationships' -> 'expense' -> 'data' ->> 'id') IS NOT NULL THEN 'EXPENSE'
-                    WHEN (p.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id') IS NOT NULL THEN 'SALE'
-                    ELSE 'OTHER' -- Por si acaso hay algún otro tipo en el futuro
-                END AS transaction_type,
+DROP MATERIALIZED VIEW IF EXISTS public.mv_pagos CASCADE;
+CREATE MATERIALIZED VIEW public.mv_pagos AS
+SELECT DISTINCT ON (p.id_fudo, p.id_sucursal_fuente)
+    (p.payload_json ->> 'id')::FLOAT::INTEGER AS id,
+    p.id_sucursal_fuente AS id_sucursal,
+    (p.payload_json ->> 'id') || '-' || p.id_sucursal_fuente AS payment_key,
+    (p.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id')::FLOAT::INTEGER AS pos_order_id,
+    (p.payload_json -> 'relationships' -> 'paymentMethod' -> 'data' ->> 'id')::FLOAT::INTEGER AS id_payment,
+    (p.payload_json -> 'attributes' ->> 'amount')::FLOAT AS amount,
+    
+    CASE WHEN (p.payload_json -> 'relationships' -> 'expense' -> 'data' ->> 'id') IS NOT NULL THEN 'EXPENSE'
+         WHEN (p.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id') IS NOT NULL THEN 'SALE'
+         ELSE 'OTHER' END AS transaction_type,
+    CASE WHEN (p.payload_json -> 'relationships' -> 'expense' -> 'data' ->> 'id') IS NOT NULL THEN -((p.payload_json -> 'attributes' ->> 'amount')::FLOAT)
+         ELSE (p.payload_json -> 'attributes' ->> 'amount')::FLOAT END AS signed_amount,
 
-                -- NUEVO CAMPO 2: Monto con Signo (Positivo para ventas, Negativo para gastos)
-                CASE
-                    WHEN (p.payload_json -> 'relationships' -> 'expense' -> 'data' ->> 'id') IS NOT NULL THEN -((p.payload_json -> 'attributes' ->> 'amount')::FLOAT)
-                    ELSE (p.payload_json -> 'attributes' ->> 'amount')::FLOAT
-                END AS signed_amount,
-
-                (p.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE AS payment_date,
-                (p.payload_json -> 'relationships' -> 'expense' -> 'data' ->> 'id') AS expense_id,
-                (frs.payload_json ->> 'id') || '-' || frs.id_sucursal_fuente AS order_key_fk
-            FROM public.fudo_raw_payments p
-            LEFT JOIN public.fudo_raw_sales frs ON (p.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id')::INTEGER = (frs.payload_json ->> 'id')::INTEGER
-                                                AND p.id_sucursal_fuente = frs.id_sucursal_fuente
-            WHERE p.payload_json ->> 'id' IS NOT NULL
-              AND (p.payload_json -> 'attributes' ->> 'amount') IS NOT NULL
-              AND (p.payload_json -> 'attributes' ->> 'createdAt') IS NOT NULL
-              AND (p.payload_json -> 'relationships' -> 'paymentMethod' -> 'data' ->> 'id') IS NOT NULL
-              AND (p.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN IS NOT TRUE
-            ORDER BY p.id_fudo, p.id_sucursal_fuente, p.fecha_extraccion_utc DESC;
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_pagos_payment_key ON public.mv_pagos (payment_key);
+    (p.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE AS payment_date,
+    (p.payload_json -> 'relationships' -> 'expense' -> 'data' ->> 'id') AS expense_id,
+    (
+        (p.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id') || '-' || p.id_sucursal_fuente
+    ) AS order_key_fk
+FROM public.fudo_raw_payments p
+LEFT JOIN public.fudo_raw_sales frs ON (p.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id')::FLOAT::INTEGER = (frs.payload_json ->> 'id')::FLOAT::INTEGER
+                                    AND p.id_sucursal_fuente = frs.id_sucursal_fuente
+WHERE p.payload_json ->> 'id' IS NOT NULL 
+  AND (p.payload_json -> 'attributes' ->> 'amount') IS NOT NULL 
+  AND (p.payload_json -> 'attributes' ->> 'createdAt') IS NOT NULL
+  AND (p.payload_json -> 'relationships' -> 'paymentMethod' -> 'data' ->> 'id') IS NOT NULL
+  AND (p.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN IS NOT TRUE
+ORDER BY p.id_fudo, p.id_sucursal_fuente, p.fecha_extraccion_utc DESC;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_pagos_payment_key ON public.mv_pagos (payment_key);
         """),
         ('mv_sales_order_line', """
-            CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_sales_order_line AS
+DROP MATERIALIZED VIEW IF EXISTS public.mv_sales_order_line CASCADE;
+            CREATE MATERIALIZED VIEW public.mv_sales_order_line AS
             SELECT DISTINCT ON (i.id_fudo, i.id_sucursal_fuente)
-                (i.payload_json ->> 'id')::INTEGER AS id_order_line, -- ID de línea de Fudo
-                i.id_sucursal_fuente AS id_sucursal, -- Mantener id_sucursal
-                -- Crear una clave primaria compuesta para la Línea de Orden
-                (i.payload_json ->> 'id') || '-' || i.id_sucursal_fuente AS order_line_key, -- <--- NUEVA CLAVE ÚNICA DE LA LÍNEA DE ORDEN
-                (i.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id')::INTEGER AS id_order,
+                -- ID de la línea de orden (del ítem)
+                (i.payload_json ->> 'id')::FLOAT::INTEGER AS id_order_line_fudo, -- <--- ¡Asegurarnos de que este esté!
+                i.id_sucursal_fuente AS id_sucursal,
+                (i.payload_json ->> 'id') || '-' || i.id_sucursal_fuente AS order_line_key,
+                
+                -- ID de la venta (del relationships.sale)
+                (i.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id')::FLOAT::INTEGER AS id_order_fudo, -- <--- ¡Asegurarnos de que este esté!
+                
+                (
+                    (i.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id') || '-' || i.id_sucursal_fuente
+                ) AS order_key_fk,
                 (i.payload_json -> 'attributes' ->> 'createdAt')::TIMESTAMP WITH TIME ZONE AS date_order_time,
                 (i.payload_json -> 'attributes' ->> 'createdAt')::DATE AS date_order,
-                (i.payload_json -> 'relationships' -> 'product' -> 'data' ->> 'id')::INTEGER AS id_product,
-                (i.payload_json -> 'attributes' ->> 'price')::FLOAT AS price_unit,
-                ((i.payload_json -> 'attributes' ->> 'quantity')::FLOAT)::INTEGER AS qty,
-                ((i.payload_json -> 'attributes' ->> 'price')::FLOAT * (i.payload_json -> 'attributes' ->> 'quantity')::FLOAT)::FLOAT AS amount_total,
-                -- Necesitamos el order_key de la venta para la FK
-                (frs.payload_json ->> 'id') || '-' || frs.id_sucursal_fuente AS order_key_fk -- <--- FK a Sales_order.order_key
+                
+                -- ID del producto (del relationships.product)
+                (i.payload_json -> 'relationships' -> 'product' -> 'data' ->> 'id')::FLOAT::INTEGER AS id_product_fudo, -- <--- ¡Asegurarnos de que este esté!
+                
+                (
+                    (i.payload_json -> 'relationships' -> 'product' -> 'data' ->> 'id') || '-' || i.id_sucursal_fuente
+                ) AS product_key_fk,
+                
+                -- Cantidad y precio original de la API (campos auxiliares)
+                COALESCE(((i.payload_json -> 'attributes' ->> 'quantity')::FLOAT), 0) AS qty_from_api,
+                COALESCE(((i.payload_json -> 'attributes' ->> 'price')::FLOAT), 0) AS price_from_api,
+                
+                -- Precio unitario corregido
+                CASE
+                    WHEN COALESCE(((i.payload_json -> 'attributes' ->> 'quantity')::FLOAT), 0) > 0 
+                    THEN COALESCE(((i.payload_json -> 'attributes' ->> 'price')::FLOAT), 0) / COALESCE(((i.payload_json -> 'attributes' ->> 'quantity')::FLOAT), 0)
+                    ELSE 0.0
+                END AS price_unit, 
+                
+                -- Cantidad final (siempre entero)
+                COALESCE(((i.payload_json -> 'attributes' ->> 'quantity')::FLOAT::INTEGER), 0) AS qty, -- Esta línea suele estar bien, pero si Fudo manda "3.0" aquí fallaría.
+                                                                                               -- Si falla, cambiar a ::FLOAT::INTEGER también.
+                
+                -- Monto total de la línea
+                (
+                    CASE
+                        WHEN COALESCE(((i.payload_json -> 'attributes' ->> 'quantity')::FLOAT), 0) > 0 
+                        THEN COALESCE(((i.payload_json -> 'attributes' ->> 'price')::FLOAT), 0) / COALESCE(((i.payload_json -> 'attributes' ->> 'quantity')::FLOAT), 0)
+                        ELSE 0.0
+                    END
+                ) * COALESCE(((i.payload_json -> 'attributes' ->> 'quantity')::FLOAT), 0) AS amount_total
             FROM public.fudo_raw_items i
-            JOIN public.fudo_raw_sales frs ON (i.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id')::INTEGER = (frs.payload_json ->> 'id')::INTEGER
-            WHERE i.payload_json ->> 'id' IS NOT NULL AND (i.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id') IS NOT NULL AND (i.payload_json -> 'relationships' -> 'product' -> 'data' ->> 'id') IS NOT NULL AND (i.payload_json -> 'attributes' ->> 'createdAt') IS NOT NULL AND (i.payload_json -> 'attributes' ->> 'price') IS NOT NULL AND (i.payload_json -> 'attributes' ->> 'quantity') IS NOT NULL AND (i.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN IS NOT TRUE AND ((i.payload_json -> 'attributes' ->> 'quantity')::FLOAT)::INTEGER > 0
+            WHERE i.payload_json ->> 'id' IS NOT NULL 
+              AND (i.payload_json -> 'relationships' -> 'sale' -> 'data' ->> 'id') IS NOT NULL
+              AND (i.payload_json -> 'relationships' -> 'product' -> 'data' ->> 'id') IS NOT NULL
+              AND (i.payload_json -> 'attributes' ->> 'createdAt') IS NOT NULL
+              AND (i.payload_json -> 'attributes' ->> 'price') IS NOT NULL
+              AND (i.payload_json -> 'attributes' ->> 'quantity') IS NOT NULL
+              AND (i.payload_json -> 'attributes' ->> 'canceled')::BOOLEAN IS NOT TRUE
+              AND COALESCE(((i.payload_json -> 'attributes' ->> 'quantity')::FLOAT), 0) > 0
             ORDER BY i.id_fudo, i.id_sucursal_fuente, i.fecha_extraccion_utc DESC;
-            -- El índice único ahora es sobre la nueva columna 'order_line_key'
             CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_sales_order_line_order_line_key ON public.mv_sales_order_line (order_line_key);
         """),
           # --- AÑADIMOS EL NUEVO DER DE GASTOS ---
         # mv_expense_categories (NUEVA MV - CON ÍNDICE ÚNICO)
         ('mv_expense_categories', """
-            DROP MATERIALIZED VIEW IF EXISTS public.mv_expense_categories CASCADE;
-            CREATE MATERIALIZED VIEW public.mv_expense_categories AS
-            SELECT DISTINCT ON (ec.id_fudo, ec.id_sucursal_fuente)
-                (ec.payload_json ->> 'id') AS id_expense_category,
-                (ec.payload_json -> 'attributes' ->> 'name') AS expense_category_name,
-                (ec.payload_json -> 'attributes' ->> 'financialCategory') AS financial_category,
-                (ec.payload_json -> 'attributes' ->> 'active')::BOOLEAN AS active,
-                (ec.payload_json -> 'relationships' -> 'parentCategory' -> 'data' ->> 'id') AS parent_category_id,
-                ec.id_sucursal_fuente AS id_sucursal, -- Mantener id_sucursal
-                (ec.payload_json ->> 'id') || '-' || ec.id_sucursal_fuente AS expense_category_key
-            FROM public.fudo_raw_expense_categories ec
-            WHERE (ec.payload_json ->> 'id') IS NOT NULL AND (ec.payload_json -> 'attributes' ->> 'name') IS NOT NULL AND ec.id_sucursal_fuente IS NOT NULL
-            ORDER BY ec.id_fudo, ec.id_sucursal_fuente, ec.fecha_extraccion_utc DESC;
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_expense_categories_key ON public.mv_expense_categories (expense_category_key);
+DROP MATERIALIZED VIEW IF EXISTS public.mv_expense_categories CASCADE;
+CREATE MATERIALIZED VIEW public.mv_expense_categories AS
+SELECT DISTINCT ON (ec.id_fudo, ec.id_sucursal_fuente)
+    (ec.payload_json ->> 'id')::FLOAT::INTEGER AS id_expense_category,
+    (ec.payload_json -> 'attributes' ->> 'name') AS expense_category_name,
+    (ec.payload_json -> 'attributes' ->> 'financialCategory') AS financial_category,
+    (ec.payload_json -> 'attributes' ->> 'active')::BOOLEAN AS active,
+    (ec.payload_json -> 'relationships' -> 'parentCategory' -> 'data' ->> 'id') AS parent_category_id,
+    ec.id_sucursal_fuente AS id_sucursal,
+    (ec.payload_json ->> 'id') || '-' || ec.id_sucursal_fuente AS expense_category_key
+FROM public.fudo_raw_expense_categories ec
+WHERE (ec.payload_json ->> 'id') IS NOT NULL 
+  AND (ec.payload_json -> 'attributes' ->> 'name') IS NOT NULL
+  AND ec.id_sucursal_fuente IS NOT NULL
+ORDER BY ec.id_fudo, ec.id_sucursal_fuente, ec.fecha_extraccion_utc DESC;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_expense_categories_key ON public.mv_expense_categories (expense_category_key);
         """),
 
         # mv_expenses (NUEVA MV - CON ÍNDICE ÚNICO)
@@ -201,7 +240,7 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
            DROP MATERIALIZED VIEW IF EXISTS public.mv_expenses CASCADE;
             CREATE MATERIALIZED VIEW public.mv_expenses AS
             SELECT DISTINCT ON (e.id_fudo, e.id_sucursal_fuente)
-                (e.payload_json ->> 'id') AS id_expense,
+                (e.payload_json ->> 'id')::FLOAT::INTEGER AS id_expense,
                 e.id_sucursal_fuente AS id_sucursal,
                 (e.payload_json -> 'attributes' ->> 'amount')::FLOAT AS amount,
                 (e.payload_json -> 'attributes' ->> 'description') AS description,
@@ -221,30 +260,30 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
                 (e.payload_json -> 'relationships' -> 'expenseCategory' -> 'data' ->> 'id') AS expense_category_id,
                 (e.payload_json -> 'relationships' -> 'expenseCategory' -> 'data' ->> 'id') || '-' || e.id_sucursal_fuente AS expense_category_key
             FROM public.fudo_raw_expenses e
-            WHERE (e.payload_json ->> 'id') IS NOT NULL AND e.id_sucursal_fuente IS NOT NULL
+            WHERE (e.payload_json ->> 'id') IS NOT NULL
+              AND e.id_sucursal_fuente IS NOT NULL
             ORDER BY e.id_fudo, e.id_sucursal_fuente, e.fecha_extraccion_utc DESC;
             CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_expenses_id_sucursal ON public.mv_expenses (id_expense, id_sucursal); 
         """),
         ('mv_product_categories_details', """
-            DROP MATERIALIZED VIEW IF EXISTS public.mv_product_categories_details CASCADE;
-            CREATE MATERIALIZED VIEW public.mv_product_categories_details AS
-            SELECT DISTINCT ON (pc.id_fudo, pc.id_sucursal_fuente)
-                (pc.payload_json ->> 'id')::INTEGER AS id_product_category,
-                (pc.payload_json -> 'attributes' ->> 'name')::VARCHAR(255) AS product_category_name,
-                (pc.payload_json -> 'attributes' ->> 'position')::INTEGER AS "position",
-                (pc.payload_json -> 'attributes' ->> 'preparationTime')::INTEGER AS preparation_time,
-                (pc.payload_json -> 'attributes' ->> 'enableOnlineMenu')::BOOLEAN AS enable_online_menu,
-                (pc.payload_json -> 'relationships' -> 'kitchen' -> 'data' ->> 'id') AS kitchen_id,
-                (pc.payload_json -> 'relationships' -> 'parentCategory' -> 'data' ->> 'id') AS parent_category_id,
-                pc.id_sucursal_fuente AS id_sucursal,
-                (pc.payload_json ->> 'id') || '-' || pc.id_sucursal_fuente AS product_category_key
-            FROM public.fudo_raw_product_categories pc
-            WHERE
-                (pc.payload_json ->> 'id') IS NOT NULL AND
-                (pc.payload_json -> 'attributes' ->> 'name') IS NOT NULL AND
-                pc.id_sucursal_fuente IS NOT NULL
-            ORDER BY pc.id_fudo, pc.id_sucursal_fuente, pc.fecha_extraccion_utc DESC;
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_product_categories_key ON public.mv_product_categories_details (product_category_key);
+DROP MATERIALIZED VIEW IF EXISTS public.mv_product_categories_details CASCADE;
+CREATE MATERIALIZED VIEW public.mv_product_categories_details AS
+SELECT DISTINCT ON (pc.id_fudo, pc.id_sucursal_fuente)
+    (pc.payload_json ->> 'id')::FLOAT::INTEGER AS id_product_category,
+    (pc.payload_json -> 'attributes' ->> 'name')::VARCHAR(255) AS product_category_name,
+    (pc.payload_json -> 'attributes' ->> 'position')::INTEGER AS "position",
+    (pc.payload_json -> 'attributes' ->> 'preparationTime')::INTEGER AS preparation_time,
+    (pc.payload_json -> 'attributes' ->> 'enableOnlineMenu')::BOOLEAN AS enable_online_menu,
+    (pc.payload_json -> 'relationships' -> 'kitchen' -> 'data' ->> 'id') AS kitchen_id,
+    (pc.payload_json -> 'relationships' -> 'parentCategory' -> 'data' ->> 'id') AS parent_category_id,
+    pc.id_sucursal_fuente AS id_sucursal,
+    (pc.payload_json ->> 'id') || '-' || pc.id_sucursal_fuente AS product_category_key
+FROM public.fudo_raw_product_categories pc
+WHERE (pc.payload_json ->> 'id') IS NOT NULL 
+  AND (pc.payload_json -> 'attributes' ->> 'name') IS NOT NULL
+  AND pc.id_sucursal_fuente IS NOT NULL
+ORDER BY pc.id_fudo, pc.id_sucursal_fuente, pc.fecha_extraccion_utc DESC;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_product_categories_key ON public.mv_product_categories_details (product_category_key);
         """),
     ]
 
@@ -312,21 +351,22 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
                 (e.payload_json -> 'relationships' -> 'provider' -> 'data' ->> 'id') AS provider_id,
                 (e.payload_json -> 'relationships' -> 'receiptType' -> 'data' ->> 'id') AS receipt_type_id,
                 (e.payload_json -> 'relationships' -> 'cashRegister' -> 'data' ->> 'id') AS cash_register_id,
-                (e.payload_json -> 'relationships' -> 'expenseItems' -> 'data') AS expense_items,
+                (e.payload_json -> 'relationships' -> 'expenseItems' -> 'data') AS expense_items, -- Mantener como JSONB array
                 (e.payload_json -> 'relationships' -> 'paymentMethod' -> 'data' ->> 'id') AS payment_method_id,
                 (e.payload_json -> 'relationships' -> 'expenseCategory' -> 'data' ->> 'id') AS expense_category_id,
                 e.payload_json AS original_payload
             FROM public.fudo_raw_expenses e
             ORDER BY e.id_fudo, e.id_sucursal_fuente, e.fecha_extraccion_utc DESC;
         """),
-        # fudo_view_raw_expense_categories (¡ACTUALIZADA!)
+        # fudo_view_raw_expense_categories (Basado en ejemplo, sin 'fields')
         ('fudo_view_raw_expense_categories', """
             DROP VIEW IF EXISTS public.fudo_view_raw_expense_categories;
             CREATE OR REPLACE VIEW public.fudo_view_raw_expense_categories AS
             SELECT
                 ec.id_fudo, ec.id_sucursal_fuente, ec.fecha_extraccion_utc, ec.payload_checksum,
-                (ec.payload_json ->> 'id') AS category_id, (ec.payload_json -> 'attributes' ->> 'active')::BOOLEAN AS active,
-                (ec.payload_json -> 'attributes' ->> 'name') AS category_name,
+                (ec.payload_json ->> 'id') AS category_id,
+                (ec.payload_json -> 'attributes' ->> 'name') AS category_name, -- CORREGIDO, era category_active
+                (ec.payload_json -> 'attributes' ->> 'active')::BOOLEAN AS active,
                 (ec.payload_json -> 'attributes' ->> 'financialCategory') AS financial_category,
                 (ec.payload_json -> 'relationships' -> 'parentCategory' -> 'data' ->> 'id') AS parent_category_id,
                 ec.payload_json AS original_payload
@@ -373,19 +413,20 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
             FROM public.fudo_raw_items i
             ORDER BY i.id_fudo, i.id_sucursal_fuente, i.fecha_extraccion_utc DESC;
         """),
-        # fudo_view_raw_kitchens (¡ACTUALIZADA!)
+        # fudo_view_raw_kitchens (Basado en ejemplo, sin 'fields')
         ('fudo_view_raw_kitchens', """
             DROP VIEW IF EXISTS public.fudo_view_raw_kitchens;
             CREATE OR REPLACE VIEW public.fudo_view_raw_kitchens AS
             SELECT
                 k.id_fudo, k.id_sucursal_fuente, k.fecha_extraccion_utc, k.payload_checksum,
-                (k.payload_json ->> 'id') AS kitchen_id, (k.payload_json -> 'attributes' ->> 'name') AS kitchen_name,
+                (k.payload_json ->> 'id') AS kitchen_id,
+                (k.payload_json -> 'attributes' ->> 'name') AS kitchen_name,
                 k.payload_json AS original_payload
             FROM public.fudo_raw_kitchens k
             ORDER BY k.id_fudo, k.id_sucursal_fuente, k.fecha_extraccion_utc DESC;
         """),
         
-        #fudo_view_raw_payments (¡ACTUALIZADA con campos completos!)
+        #fudo_view_raw_payments (¡NUEVA VISTA RAW DESNORMALIZADA!)
         ('fudo_view_raw_payments', """
             drop view if exists public.fudo_view_raw_payments CASCADE;
             CREATE OR REPLACE VIEW public.fudo_view_raw_payments AS
@@ -434,7 +475,7 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
             ORDER BY p.id_fudo, p.id_sucursal_fuente, p.fecha_extraccion_utc DESC;
         """),
         
-        # fudo_view_raw_product_modifiers (¡ACTUALIZADA!)
+        # fudo_view_raw_product_modifiers (Basado en ejemplo, sin 'fields')
         ('fudo_view_raw_product_modifiers', """
             DROP VIEW IF EXISTS public.fudo_view_raw_product_modifiers;
             CREATE OR REPLACE VIEW public.fudo_view_raw_product_modifiers AS
@@ -502,7 +543,7 @@ def refresh_analytics_materialized_views(db_manager: DBManager):
             ORDER BY u.id_fudo, u.id_sucursal_fuente, u.fecha_extraccion_utc DESC;
         """),
 
-        #fudo_view_raw_sales (¡ACTUALIZADA con campos completos!)
+        #fudo_view_raw_sales (¡NUEVA VISTA RAW DESNORMALIZADA con todos los campos del JSON!)
         ('fudo_view_raw_sales', """
             drop view if exists public.fudo_view_raw_sales CASCADE;
             CREATE OR REPLACE VIEW public.fudo_view_raw_sales AS
